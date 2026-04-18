@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.2.1
+// @version      1.2.2
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @match        *://*.bilibili.com/*
@@ -496,7 +496,7 @@
     const btn = document.createElement("button");
     btn.className = "qfav-detail-btn";
     btn.title = "快捷收藏";
-    btn.innerHTML = starSvg(false, false, ICON_SIZE);
+    btn.innerHTML = starSvg(false, true, ICON_SIZE);
 
     btn.addEventListener("click", async (e) => {
       e.preventDefault();
@@ -505,7 +505,7 @@
       if (!aid) return;
 
       await toggleFav(aid, btn, (faved) => {
-        btn.innerHTML = starSvg(faved, false, ICON_SIZE);
+        btn.innerHTML = starSvg(faved, true, ICON_SIZE);
       });
     });
 
@@ -523,7 +523,7 @@
         const faved = await checkFavoured(aid, folderId);
         favCache.set(aid, faved);
         if (faved) {
-          btn.innerHTML = starSvg(true, false, ICON_SIZE);
+          btn.innerHTML = starSvg(true, true, ICON_SIZE);
         }
       } catch (_) {}
     })();
