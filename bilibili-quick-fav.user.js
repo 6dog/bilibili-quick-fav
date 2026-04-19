@@ -15,6 +15,7 @@
 
   // ===== 常量 =====
   const PROCESSED_ATTR = "data-qfav-processed";
+  const CARD_HOVER_ATTR = "data-qfav-card";
   const FAV_FOLDER_KEY = "qfav_folder_id";
   const FAV_FOLDER_NAME_KEY = "qfav_folder_name";
   const DEFAULT_PLAYBACK_RATE = 1.5;
@@ -222,6 +223,28 @@
   }
 
   // ===== 注入 CSS =====
+  const COVER_CARD_SELECTORS = [
+    ".bili-video-card",
+    ".video-card",
+    ".small-item",
+    ".video-list-item",
+    ".fav-video-list .items .item",
+    ".feed-card",
+    ".bili-feed-card",
+    ".bili-dyn-card-video",
+  ];
+  const LINK_CARD_FALLBACK_SELECTOR = [
+    ".bili-dyn-card-video",
+    ".bili-feed-card",
+    ".feed-card",
+    ".bili-video-card",
+    ".video-card",
+    ".small-item",
+    ".video-list-item",
+    ".fav-video-list .items .item",
+    "article",
+    "a[href*=\"/video/BV\"]",
+  ].join(",");
 
   function injectStyles() {
     const style = document.createElement("style");
@@ -254,10 +277,7 @@
         opacity: 0.5 !important;
       }
       /* 卡片 hover 时显示按钮 */
-      .bili-video-card:hover .qfav-btn,
-      .video-card:hover .qfav-btn,
-      .small-item:hover .qfav-btn,
-      .video-list-item:hover .qfav-btn {
+      [data-qfav-card="1"]:hover > .qfav-btn {
         opacity: 1;
       }
       /* 详情页按钮 —— 视频下方工具栏 */
@@ -370,6 +390,7 @@
 
   function injectCoverButton(cardEl, bvid) {
     if (cardEl.querySelector(".qfav-btn")) return;
+    cardEl.setAttribute(CARD_HOVER_ATTR, "1");
 
     // 确保卡片有 position relative
     const pos = getComputedStyle(cardEl).position;
@@ -443,19 +464,30 @@
     return !!(el && el.closest && el.closest(HEADER_GUARD_SELECTOR));
   }
 
+  function collectVideoCardTargets() {
+    const targets = new Set();
+
+    document.querySelectorAll(COVER_CARD_SELECTORS.join(",")).forEach((card) => {
+      if (!isInsideHeader(card)) {
+        targets.add(card);
+      }
+    });
+
+    document.querySelectorAll('a[href*="/video/BV"]').forEach((link) => {
+      const card =
+        link.closest(LINK_CARD_FALLBACK_SELECTOR) ||
+        link.parentElement ||
+        link;
+      if (card && !isInsideHeader(card)) {
+        targets.add(card);
+      }
+    });
+
+    return Array.from(targets);
+  }
+
   function scanVideoCards() {
-    // B 站各种页面的视频卡片选择器
-    const selectors = [
-      ".bili-video-card",
-      ".video-card",
-      ".small-item",
-      ".video-list-item",
-      ".fav-video-list .items .item", // 收藏夹页面
-    ];
-
-    const cards = document.querySelectorAll(selectors.join(","));
-
-    cards.forEach((card) => {
+    collectVideoCardTargets().forEach((card) => {
       if (card.hasAttribute(PROCESSED_ATTR)) return;
       if (isInsideHeader(card)) return; // 不碰 header 内部的卡片
       card.setAttribute(PROCESSED_ATTR, "1");
