@@ -245,6 +245,8 @@
     "article",
     "a[href*=\"/video/BV\"]",
   ].join(",");
+  const MEDIA_HINT_SELECTOR = "img, picture, video, canvas";
+  const COVER_CARD_SELECTOR = COVER_CARD_SELECTORS.join(",");
 
   function injectStyles() {
     const style = document.createElement("style");
@@ -464,21 +466,40 @@
     return !!(el && el.closest && el.closest(HEADER_GUARD_SELECTOR));
   }
 
+  function normalizeVideoCardTarget(target) {
+    if (!target || isInsideHeader(target)) return null;
+
+    const nestedCover = target.matches?.(COVER_CARD_SELECTOR)
+      ? target
+      : target.querySelector?.(COVER_CARD_SELECTOR);
+    if (nestedCover && !isInsideHeader(nestedCover)) {
+      return nestedCover;
+    }
+
+    if (target.matches?.(MEDIA_HINT_SELECTOR) || target.querySelector?.(MEDIA_HINT_SELECTOR)) {
+      return target;
+    }
+
+    return null;
+  }
+
   function collectVideoCardTargets() {
     const targets = new Set();
 
-    document.querySelectorAll(COVER_CARD_SELECTORS.join(",")).forEach((card) => {
-      if (!isInsideHeader(card)) {
-        targets.add(card);
+    document.querySelectorAll(COVER_CARD_SELECTOR).forEach((card) => {
+      const target = normalizeVideoCardTarget(card);
+      if (target) {
+        targets.add(target);
       }
     });
 
     document.querySelectorAll('a[href*="/video/BV"]').forEach((link) => {
-      const card =
+      const card = normalizeVideoCardTarget(
         link.closest(LINK_CARD_FALLBACK_SELECTOR) ||
-        link.parentElement ||
-        link;
-      if (card && !isInsideHeader(card)) {
+          link.parentElement ||
+          link,
+      );
+      if (card) {
         targets.add(card);
       }
     });
