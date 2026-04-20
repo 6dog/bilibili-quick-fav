@@ -1,187 +1,80 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.2.1-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.2.2-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-一个让 B 站浏览更顺手的油猴脚本，主要解决两个痛点：
+给 B 站加两个顺手功能：
 
-1. 🔖 **一键收藏**：在视频列表页悬停封面即可点击收藏，不用再点进详情页 → 再点收藏 → 再选收藏夹，原生流程的三步被压缩成一步。
-2. ⚡ **默认 1.5 倍速**：B 站不记忆倍速设置，每个视频都得手动调。脚本会自动把倍速设为 1.5（可自定义），同时尊重你的手动切换。
-
----
+- 视频封面悬停显示书签按钮，一键收藏到指定收藏夹
+- 播放页默认 1.5 倍速，并尊重手动切换
 
 ## 安装
 
-1. 先装一个用户脚本管理器：[Tampermonkey](https://www.tampermonkey.net/) / [Violentmonkey](https://violentmonkey.github.io/)
-2. 点击 [`bilibili-quick-fav.user.js`](./bilibili-quick-fav.user.js) → 右上角 **Raw** 按钮 → 管理器会自动弹出安装确认框
-3. 打开 B 站，首次点击收藏按钮时选定一个"快捷收藏夹"即可
+1. 安装用户脚本管理器：[Tampermonkey](https://www.tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/)
+2. 打开 [`bilibili-quick-fav.user.js`](./bilibili-quick-fav.user.js)
+3. 点击 `Raw` 安装
 
----
+## 功能
 
-## 功能特性
+### 一键收藏
 
-### 🔖 一键收藏
+- 视频卡片悬停时，左上角显示书签按钮
+- 点击收藏到你预先选择的快捷收藏夹
+- 再点一次即可取消收藏
+- 视频详情页工具栏也会插入同样的快捷收藏按钮
 
-- 鼠标悬停在视频封面上时，**左上角会出现一个书签按钮**。
-- 点击即可将视频收藏到**你预先设定的快捷收藏夹**；再次点击则取消收藏。
-- 首次使用时会弹出选择框，让你从自己的收藏夹列表里挑一个作为"快捷收藏目标"。
-- 已收藏的视频，书签会变成 **B 站蓝 (#00aeec) 实心填充**；未收藏则是空心描边，视觉风格贴近 B 站原生按钮。
-- 视频详情页的工具栏（点赞 / 投币 / 收藏 一排）也会插入一个快捷收藏按钮，功能相同。
+### 默认倍速
 
-**工作原理**：通过 B 站官方接口 `x/v3/fav/resource/deal` 进行收藏/取消收藏操作，使用你已登录账号的 Cookie 鉴权，不需要任何额外授权。
+- 视频页默认切到 `1.5x`
+- 切换分 P、清晰度或播放器重置后会自动补回
+- 如果你手动选了别的倍速，当前视频不再强制接管
 
-### ⚡ 默认 1.5 倍速
+## 支持页面
 
-- 打开任意视频，**播放速度会自动设置为 1.5 倍**。
-- 为了避免"首帧先闪一下 1.0x 再切过来"，脚本会在 `<video>` 元素**被插入 DOM 的瞬间**同步写入 `defaultPlaybackRate`，比 `loadedmetadata` / `canplay` 等事件更早生效。
-- 切换清晰度、切换分 P、广告结束后播放器内部把速度重置回 1.0 时，脚本会**自动再改回 1.5**。
-- 如果你通过 B 站播放器自带的速度菜单**手动选择了其他倍速**（例如 1.0、2.0、0.75），脚本会**立即放弃接管**当前视频，尊重你的选择。
-- 下一个视频打开时会**重新恢复 1.5 倍**作为默认。
-
----
-
-## 适用范围
-
-- 首页推荐 / 热门 / 排行榜
-- 分区页 / 搜索结果页
-- 用户主页 / 动态页
-- 视频详情页（含多 P、合集）
-- 收藏夹页面
-- 支持 B 站 **新版 bpx 播放器** 和 **旧版 bilibili-player**
-
----
+- 首页、热门、排行榜
+- 搜索结果、分区页、用户主页
+- 动态页、收藏夹页
+- 视频详情页、合集、多 P
 
 ## 自定义
 
-脚本顶部几个常量可以直接改：
+可以直接修改脚本顶部常量：
 
 ```js
-const DEFAULT_PLAYBACK_RATE = 1.5; // 默认倍速
-const KEEP_TOP_BAR_VISIBLE = false; // 顶部栏保活（debug 用，建议保持 false）
-const ENABLE_DEFAULT_RATE = true; // 整个倍速功能的总开关
-const DOM_BOOTSTRAP_DELAY_MS = 1500; // DOM 扫描延迟（避开 B 站 SPA 初始挂载）
+const DEFAULT_PLAYBACK_RATE = 1.5;
+const KEEP_TOP_BAR_VISIBLE = false;
+const ENABLE_DEFAULT_RATE = true;
+const DOM_BOOTSTRAP_DELAY_MS = 1500;
 ```
-
----
 
 ## 常见问题
 
-**Q：为什么点了书签没反应？**
-A：请确认你已登录 B 站账号。脚本依赖你的登录 Cookie 调用收藏接口，未登录时无法工作。
+**按钮没反应**
 
-**Q：想换一个快捷收藏夹怎么办？**
-A：在脚本管理器中清空脚本的存储（Tampermonkey → 脚本详情 → 存储 → 全部删除），或在浏览器控制台执行：
+请先确认已经登录 B 站。收藏接口依赖登录态。
+
+**想重新选择快捷收藏夹**
+
+清空脚本存储，或在控制台执行：
 
 ```js
 GM_deleteValue("qfav_folder_id");
 ```
 
-下次点击收藏按钮时会重新弹出收藏夹选择框。
+**不想启用默认倍速**
 
-**Q：速度菜单显示 "1.0x" 但视频是 1.5 倍速？**
-A：这是因为 B 站播放器的速度菜单 UI 不会主动从 `video.playbackRate` 同步。实际播放速度以耳朵听到的为准。你可以点一次菜单里的 1.5x 让显示同步。
+把 `ENABLE_DEFAULT_RATE` 改成 `false`，或者把 `DEFAULT_PLAYBACK_RATE` 改成 `1`。
 
-**Q：我不想要 1.5 倍速这个功能，只要一键收藏？**
-A：打开脚本源码，把顶部的 `ENABLE_DEFAULT_RATE` 改成 `false`，或把 `DEFAULT_PLAYBACK_RATE` 设为 `1`（等价于不干预）。
+## 说明
 
-**Q：某个页面的封面没有出现收藏按钮？**
-A：B 站改版时可能会更换视频卡片的 CSS 类名。欢迎提 Issue 并附上页面 URL 和卡片的 DOM 结构，我会跟进适配。
-
----
-
-## 隐私与安全
-
-- 脚本**所有请求都发往 `api.bilibili.com`**，不会把任何数据发送到第三方服务器。
-- 唯一持久化存储的内容是**你选择的快捷收藏夹 ID 和名称**，保存在 Tampermonkey 本地存储里。
-- 源码完全开源，逻辑可逐行审阅。
-
-### 权限说明
-
-| 权限                          | 用途                      |
-| ----------------------------- | ------------------------- |
-| `GM_getValue` / `GM_setValue` | 保存你选择的快捷收藏夹 ID |
-| `@match *://*.bilibili.com/*` | 仅在 B 站域名下运行       |
-
-脚本**不请求** `GM_xmlhttpRequest`，所有接口调用走浏览器原生 `fetch`，完全在同源策略约束下进行。
-
----
-
-## 开发说明
-
-脚本是单文件 `bilibili-quick-fav.user.js`，没有构建步骤。改完存盘，Tampermonkey 会自动重载。
-
-核心模块：
-
-| 模块                         | 作用                                                         |
-| ---------------------------- | ------------------------------------------------------------ |
-| `scanVideoCards`             | 扫描首页/分区/搜索/收藏夹里的视频卡片，往封面注入书签按钮    |
-| `injectDetailButton`         | 往视频详情页工具栏插书签按钮                                 |
-| `startEarlyVideoInterceptor` | 在 `<video>` 元素插入 DOM 的瞬间同步写 `defaultPlaybackRate` |
-| `startFastRateBootstrap`     | rAF 高频兜底，确保倍速被偶发重置后能立刻再接管               |
-
----
-
-## 更新日志
-
-### v1.2.1
-
-- 视觉：收藏按钮图标由星形换成**书签形**，高亮色改用 B 站蓝 `#00aeec`，整体贴合 B 站原生按钮风格
-- 调整：详情页按钮位置恢复到视频下方工具栏（点赞 / 投币 / 收藏 那一排）
-
-### v1.2.0
-
-- 尝试将详情页按钮挪到视频标题左侧（v1.2.1 已回退）
-
-### v1.1.6
-
-- 修复：视频页顶部站内导航栏 `#biliMainHeader` 变成空容器（0 子节点）的问题 —— 通过将 DOM 扫描 / 注入逻辑延后 1.5 秒执行，避开 B 站 SPA 的初始挂载窗口
-- 优化：关闭了一套旧的"顶部栏保活"逻辑（`chromeVisibilityObserver` 等），精简 MutationObserver 数量
-
-### v1.1.5
-
-- 修复：从首页进入视频页时，首帧会闪一下 1.0x 再切成 1.5x 的问题 —— 通过在 `<video>` 元素插入 DOM 的瞬间同步写入 `defaultPlaybackRate`，赶在首帧渲染之前生效
-- 优化：`video` 元素新增 `loadstart` 事件兜底，比 `loadedmetadata` 更早触发倍速接管
-
-### v1.1.4
-
-- 修复：补上 `.bpx-player-control-top` 外层容器保活，解决部分视频页里"顶部状态栏仍然整条消失"的问题
-
-### v1.1.3
-
-- 修复：视频页顶部状态栏强制保持可见，避免默认倍速逻辑触发后出现"头顶状态栏消失"
-
-### v1.1.2
-
-- 优化：脚本提前到 `document-start` 启动，缩短首页进入视频页时的倍速接管延迟
-- 优化：进入视频页后启用短时高频检测，尽量在真正开播前把倍速设为 `1.5x`
-- 修复：移除通过点击倍速菜单兜底的逻辑，避免干扰播放器顶部 UI 状态
-
-### v1.1.1
-
-- 修复：从首页打开视频时，默认倍速切换会先闪一下的问题
-- 修复：默认倍速生效后，播放器顶部状态栏/控件偶发异常的问题
-- 优化：优先调用 B 站播放器原生 `setPlaybackRate` 接口，减少 UI 不同步
-
-### v1.1.0
-
-- 新增：默认 1.5 倍速功能
-- 智能判断用户手动切换倍速，自动放弃接管
-- 支持新旧两版 B 站播放器
-
-### v1.0.0
-
-- 首发：视频封面悬停显示一键收藏按钮
-- 首发：视频详情页工具栏插入收藏按钮
-- 首发：快捷收藏夹选择与持久化
-
----
+- 请求只会发往 `api.bilibili.com`
+- 本地只保存快捷收藏夹 ID 和名称
+- 单文件脚本，无构建步骤
 
 ## 反馈
 
-遇到问题或有新需求，欢迎开 [Issue](https://github.com/6dog/bilibili-quick-fav/issues)。
+有问题或新需求，欢迎提 [Issue](https://github.com/6dog/bilibili-quick-fav/issues)。
 
----
+## License
 
-## 许可
-
-[MIT](./LICENSE) © jesseyun
+[MIT](./LICENSE)

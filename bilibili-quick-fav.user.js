@@ -243,7 +243,7 @@
     ".video-list-item",
     ".fav-video-list .items .item",
     "article",
-    "a[href*=\"/video/BV\"]",
+    'a[href*="/video/BV"]',
   ].join(",");
   const MEDIA_HINT_SELECTOR = "img, picture, video, canvas";
   const COVER_CARD_SELECTOR = COVER_CARD_SELECTORS.join(",");
@@ -267,8 +267,14 @@
         transition: opacity 0.2s, transform 0.15s;
         z-index: 10000;
         border: none;
+        outline: none;
         padding: 0;
         pointer-events: auto;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .qfav-btn:focus,
+      .qfav-btn:focus-visible {
+        outline: none;
       }
       .qfav-btn:hover {
         transform: scale(1.15);
@@ -292,10 +298,16 @@
         background: transparent;
         cursor: pointer;
         border: none;
+        outline: none;
         padding: 0;
         transition: transform 0.15s;
         margin-left: 4px;
         vertical-align: middle;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .qfav-detail-btn:focus,
+      .qfav-detail-btn:focus-visible {
+        outline: none;
       }
       .qfav-detail-btn:hover {
         transform: scale(1.1);
@@ -476,7 +488,10 @@
       return nestedCover;
     }
 
-    if (target.matches?.(MEDIA_HINT_SELECTOR) || target.querySelector?.(MEDIA_HINT_SELECTOR)) {
+    if (
+      target.matches?.(MEDIA_HINT_SELECTOR) ||
+      target.querySelector?.(MEDIA_HINT_SELECTOR)
+    ) {
       return target;
     }
 
@@ -495,9 +510,7 @@
 
     document.querySelectorAll('a[href*="/video/BV"]').forEach((link) => {
       const card = normalizeVideoCardTarget(
-        link.closest(LINK_CARD_FALLBACK_SELECTOR) ||
-          link.parentElement ||
-          link,
+        link.closest(LINK_CARD_FALLBACK_SELECTOR) || link.parentElement || link,
       );
       if (card) {
         targets.add(card);
