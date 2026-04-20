@@ -288,10 +288,7 @@
       [data-qfav-card="1"]:hover > .qfav-btn {
         opacity: 1;
       }
-      /* 已收藏状态始终显示图标 */
-      .qfav-btn.qfav-active {
-        opacity: 1;
-      }
+
       /* 详情页按钮 —— 视频下方工具栏 */
       .qfav-detail-btn {
         display: inline-flex;
