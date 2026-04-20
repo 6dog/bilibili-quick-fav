@@ -82,7 +82,7 @@
       `https://api.bilibili.com/x/v2/fav/video/favoured?aid=${aid}`,
     );
     if (data.code === 0 && data.data) {
-      return data.data.favoured === true;
+      return !!data.data.favoured;
     }
     return false;
   }
@@ -286,6 +286,10 @@
       }
       /* 卡片 hover 时显示按钮 */
       [data-qfav-card="1"]:hover > .qfav-btn {
+        opacity: 1;
+      }
+      /* 已收藏状态始终显示图标 */
+      .qfav-btn.qfav-active {
         opacity: 1;
       }
       /* 详情页按钮 —— 视频下方工具栏 */
