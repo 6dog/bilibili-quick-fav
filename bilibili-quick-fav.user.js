@@ -442,10 +442,22 @@
     // 异步查询收藏状态并更新图标
     (async () => {
       try {
-        const folderId = GM_getValue(FAV_FOLDER_KEY, null);
-        if (!folderId) return;
         const aid = await getAid(bvid);
         if (!aid) return;
+
+        // 收藏夹页面上所有视频都是已收藏的，直接标记，无需 API
+        const onFavPage =
+          location.pathname.includes("/favlist") ||
+          /\/medialist\/play\/ml/.test(location.pathname);
+        if (onFavPage) {
+          favCache.set(aid, true);
+          btn.innerHTML = starSvg(true);
+          btn.classList.add("qfav-active");
+          return;
+        }
+
+        const folderId = GM_getValue(FAV_FOLDER_KEY, null);
+        if (!folderId) return;
 
         if (!favCache.has(aid)) {
           const faved = await checkFavoured(aid, folderId);
