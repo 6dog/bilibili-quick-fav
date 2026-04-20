@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.2.2-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.2.3-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
