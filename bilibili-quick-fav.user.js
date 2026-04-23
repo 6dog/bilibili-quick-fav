@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.2.3
+// @version      1.2.7
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @match        *://*.bilibili.com/*
@@ -85,6 +85,29 @@
       return !!data.data.favoured;
     }
     return false;
+  }
+
+  function getNativeFavoriteState() {
+    const activeSelector = [
+      ".video-fav.on",
+      ".video-fav.active",
+      ".video-toolbar-left-item.video-fav.on",
+      ".video-toolbar-left-item-wrap .video-fav.on",
+      '[aria-pressed="true"].video-fav',
+      '[class*="video-fav"][class*="on"]',
+    ].join(",");
+    if (document.querySelector(activeSelector)) return true;
+
+    const favButton =
+      document.querySelector(".video-fav") ||
+      document.querySelector('[class*="video-fav"]');
+    if (!favButton) return null;
+
+    const pressed = favButton.getAttribute("aria-pressed");
+    if (pressed === "true") return true;
+    if (pressed === "false") return false;
+
+    return null;
   }
 
   async function addFav(aid, folderId) {
@@ -222,6 +245,12 @@
     </svg>`;
   }
 
+  function setButtonVisualState(btn, filled, dark = false, size = 20) {
+    if (!btn) return;
+    btn.innerHTML = starSvg(filled, dark, size);
+    btn.classList.toggle("qfav-active", filled);
+  }
+
   // ===== 注入 CSS =====
   const COVER_CARD_SELECTORS = [
     ".bili-video-card",
@@ -280,6 +309,12 @@
         transform: scale(1.15);
         background: rgba(0, 0, 0, 0.75);
       }
+      .qfav-btn.qfav-active {
+        background: rgba(0, 174, 236, 0.22);
+      }
+      .qfav-btn.qfav-active:hover {
+        background: rgba(0, 174, 236, 0.32);
+      }
       .qfav-btn.qfav-loading {
         pointer-events: none;
         opacity: 0.5 !important;
@@ -312,6 +347,9 @@
       }
       .qfav-detail-btn:hover {
         transform: scale(1.1);
+      }
+      .qfav-detail-btn.qfav-active {
+        color: #00aeec;
       }
       .qfav-detail-btn.qfav-loading {
         pointer-events: none;
@@ -414,7 +452,7 @@
     const btn = document.createElement("button");
     btn.className = "qfav-btn";
     btn.title = "快捷收藏";
-    btn.innerHTML = starSvg(false);
+    setButtonVisualState(btn, false);
 
     // 阻止点击事件冒泡（避免跳转到视频页）
     btn.addEventListener("click", async (e) => {
@@ -425,12 +463,7 @@
       if (!aid) return;
 
       await toggleFav(aid, btn, (faved) => {
-        btn.innerHTML = starSvg(faved);
-        if (faved) {
-          btn.classList.add("qfav-active");
-        } else {
-          btn.classList.remove("qfav-active");
-        }
+        setButtonVisualState(btn, faved);
       });
     });
 
@@ -446,25 +479,16 @@
         const onFavPage =
           location.pathname.includes("/favlist") ||
           /\/medialist\/play\/ml/.test(location.pathname);
-        if (onFavPage) {
+        if (onFavPage && !favCache.has(aid)) {
           favCache.set(aid, true);
-          btn.innerHTML = starSvg(true);
-          btn.classList.add("qfav-active");
-          return;
         }
-
-        const folderId = GM_getValue(FAV_FOLDER_KEY, null);
-        if (!folderId) return;
-
         if (!favCache.has(aid)) {
+          const folderId = GM_getValue(FAV_FOLDER_KEY, null);
+          if (!folderId) return;
           const faved = await checkFavoured(aid, folderId);
           favCache.set(aid, faved);
         }
-        const isFaved = favCache.get(aid);
-        if (isFaved) {
-          btn.innerHTML = starSvg(true);
-          btn.classList.add("qfav-active");
-        }
+        setButtonVisualState(btn, favCache.get(aid) === true);
       } catch (_) {
         // 静默失败
       }
@@ -575,7 +599,7 @@
     const btn = document.createElement("button");
     btn.className = "qfav-detail-btn";
     btn.title = "快捷收藏";
-    btn.innerHTML = starSvg(false, true, ICON_SIZE);
+    setButtonVisualState(btn, false, true, ICON_SIZE);
 
     btn.addEventListener("click", async (e) => {
       e.preventDefault();
@@ -584,7 +608,7 @@
       if (!aid) return;
 
       await toggleFav(aid, btn, (faved) => {
-        btn.innerHTML = starSvg(faved, true, ICON_SIZE);
+        setButtonVisualState(btn, faved, true, ICON_SIZE);
       });
     });
 
@@ -594,16 +618,26 @@
     // 查询初始状态
     (async () => {
       try {
-        const folderId = GM_getValue(FAV_FOLDER_KEY, null);
-        if (!folderId) return;
+        const nativeFavState = getNativeFavoriteState();
+        if (nativeFavState !== null) {
+          setButtonVisualState(btn, nativeFavState, true, ICON_SIZE);
+        }
+
         const aid = await getAid(bvid);
         if (!aid) return;
 
-        const faved = await checkFavoured(aid, folderId);
-        favCache.set(aid, faved);
-        if (faved) {
-          btn.innerHTML = starSvg(true, true, ICON_SIZE);
+        if (favCache.has(aid)) {
+          setButtonVisualState(btn, favCache.get(aid) === true, true, ICON_SIZE);
         }
+
+        if (nativeFavState !== null) {
+          favCache.set(aid, nativeFavState);
+          setButtonVisualState(btn, nativeFavState, true, ICON_SIZE);
+        }
+
+        const faved = await checkFavoured(aid);
+        favCache.set(aid, faved);
+        setButtonVisualState(btn, faved, true, ICON_SIZE);
       } catch (_) {}
     })();
   }
