@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.2.7-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.53-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -46,6 +46,23 @@ const KEEP_TOP_BAR_VISIBLE = false;
 const ENABLE_DEFAULT_RATE = true;
 const DOM_BOOTSTRAP_DELAY_MS = 1500;
 ```
+
+## 专用测试浏览器
+
+为了避免自动化测试影响日常 Chrome，可以使用独立测试 profile：
+
+```bash
+# 第一次：打开可见窗口，登录 B 站并安装/确认脚本
+scripts/open-test-browser.sh
+
+# 之后：启动同一份 profile 的无头浏览器
+scripts/start-headless-browser.sh
+
+# 检查无头浏览器是否已登录、脚本是否生效
+scripts/check-test-browser.js
+```
+
+默认 profile 存在 `~/.codex-browsers/bilibili-quick-fav`，不会提交到 Git；无头浏览器默认静音。
 
 ## 常见问题
 
