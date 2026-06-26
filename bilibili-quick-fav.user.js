@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.2.2
+// @version      1.53
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @match        *://*.bilibili.com/*
@@ -15,6 +15,7 @@
 
   // ===== 常量 =====
   const PROCESSED_ATTR = "data-qfav-processed";
+  const CARD_HOVER_ATTR = "data-qfav-card";
   const FAV_FOLDER_KEY = "qfav_folder_id";
   const FAV_FOLDER_NAME_KEY = "qfav_folder_name";
   const DEFAULT_PLAYBACK_RATE = 1.5;
@@ -24,9 +25,21 @@
   const ENABLE_DEFAULT_RATE = true;
   // 诊断开关：延迟启动 DOM 扫描/注入，避开 B 站 SPA 挂载窗口
   const DOM_BOOTSTRAP_DELAY_MS = 1500;
+  const FAVORITES_BOOTSTRAP_DELAY_MS = 3000;
+  const DOM_SCAN_THROTTLE_MS = 200;
+  const FAVORITES_SCAN_THROTTLE_MS = 500;
+  const FAVORITES_EXTRA_SCAN_DELAYS = [2000, 5000, 8000];
+  const FAVORITES_SIDEBAR_REPAIR_DELAYS = [3500, 7000, 11000];
 
   // ===== 收藏状态缓存 =====
   const favCache = new Map();
+  const favStateSeq = new Map();
+  const pendingToggles = new Map();
+  let uidPromise = null;
+  let folderPickerPromise = null;
+
+  // SPA 导航保护期截止时间戳（毫秒）；保护期内 MutationObserver 不执行扫描
+  let navGuardUntil = 0;
 
   // ===== 工具函数 =====
 
@@ -40,7 +53,12 @@
       credentials: "include",
       ...options,
     });
-    return resp.json();
+    if (!resp.ok) return { code: -1, message: `HTTP ${resp.status}` };
+    try {
+      return await resp.json();
+    } catch {
+      return { code: -1, message: "invalid JSON response" };
+    }
   }
 
   async function apiPost(url, body) {
@@ -54,9 +72,18 @@
   // ===== B 站 API 封装 =====
 
   async function getUid() {
-    const data = await apiFetch("https://api.bilibili.com/x/web-interface/nav");
-    if (data.code !== 0) throw new Error("未登录");
-    return data.data.mid;
+    if (!uidPromise) {
+      uidPromise = apiFetch("https://api.bilibili.com/x/web-interface/nav")
+        .then((data) => {
+          if (data.code !== 0) throw new Error("未登录");
+          return data.data.mid;
+        })
+        .catch((error) => {
+          uidPromise = null;
+          throw error;
+        });
+    }
+    return uidPromise;
   }
 
   async function getFavFolders(uid) {
@@ -67,6 +94,14 @@
     return data.data.list || [];
   }
 
+  async function getCreatedFavFolders(upMid) {
+    const data = await apiFetch(
+      `https://api.bilibili.com/x/v3/fav/folder/created/list?up_mid=${upMid}&pn=1&ps=50`,
+    );
+    if (data.code !== 0) return [];
+    return data.data?.list || [];
+  }
+
   async function bv2aid(bvid) {
     const data = await apiFetch(
       `https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`,
@@ -75,14 +110,120 @@
     return data.data.aid;
   }
 
-  async function checkFavoured(aid, folderId) {
-    // 查询视频是否已被收藏到任意收藏夹
+  async function getFavFolderStates(aid) {
+    const folderId = GM_getValue(FAV_FOLDER_KEY, null);
+    const uid = await getUid();
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const data = await apiFetch(
+        `https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=${uid}&type=2&rid=${aid}`,
+      );
+      if (data.code !== 0 || !data.data?.list) {
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+        return null;
+      }
+
+      const folder = data.data.list.find(
+        (item) => String(item.id) === String(folderId),
+      );
+      return {
+        targetFaved: folder ? Number(folder.fav_state) === 1 : false,
+        selectedFolderIds: data.data.list
+          .filter((item) => Number(item.fav_state) === 1)
+          .map((item) => item.id),
+      };
+    }
+    return null;
+  }
+
+  async function checkAnyFavoured(aid) {
     const data = await apiFetch(
       `https://api.bilibili.com/x/v2/fav/video/favoured?aid=${aid}`,
     );
     if (data.code === 0 && data.data) {
-      return data.data.favoured === true;
+      return !!data.data.favoured;
     }
+    return null;
+  }
+
+  async function confirmFavState(aid, expectedFaved) {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) {
+        await new Promise((r) => setTimeout(r, 350 * attempt));
+      }
+
+      const anyFaved = await checkAnyFavoured(aid);
+      if (anyFaved !== null) {
+        if (anyFaved === expectedFaved || attempt === 3) return anyFaved;
+      }
+    }
+    return null;
+  }
+
+  function getFavStateSeq(aid) {
+    return favStateSeq.get(aid) || 0;
+  }
+
+  function bumpFavStateSeq(aid) {
+    const next = getFavStateSeq(aid) + 1;
+    favStateSeq.set(aid, next);
+    return next;
+  }
+
+  function getNativeFavoriteState(root = document) {
+    const favButton =
+      root.querySelector(".video-toolbar-left .video-fav") ||
+      root.querySelector(".video-toolbar .video-fav") ||
+      root.querySelector("#toolbar_module .video-fav") ||
+      root.querySelector(".video-fav") ||
+      root.querySelector('[class*="video-fav"]');
+    if (!favButton) return null;
+
+    const pressed = favButton.getAttribute("aria-pressed");
+    if (pressed === "true") return true;
+    if (pressed === "false") return false;
+
+    if (
+      favButton.classList.contains("on") ||
+      favButton.classList.contains("active") ||
+      favButton.classList.contains("selected") ||
+      favButton.classList.contains("checked")
+    ) {
+      return true;
+    }
+
+    const color = getComputedStyle(favButton).color;
+    if (
+      color === "rgb(0, 174, 236)" ||
+      color === "rgb(0, 161, 214)" ||
+      color === "rgb(251, 114, 153)"
+    ) {
+      return true;
+    }
+
+    const activeIcon = favButton.querySelector(".on, .active, .selected, .checked");
+    if (activeIcon) return true;
+
+    const filledIcon = favButton.querySelector(
+      'svg[fill]:not([fill="none"]), path[fill]:not([fill="none"])',
+    );
+    if (filledIcon) {
+      const fill = filledIcon.getAttribute("fill") || "";
+      const iconColor =
+        fill === "currentColor" ? getComputedStyle(filledIcon).color : fill;
+      if (
+        iconColor === "rgb(0, 174, 236)" ||
+        iconColor === "rgb(0, 161, 214)" ||
+        iconColor === "rgb(251, 114, 153)" ||
+        /^#?(00aeec|00a1d6|fb7299)$/i.test(iconColor)
+      ) {
+        return true;
+      }
+    }
+
     return false;
   }
 
@@ -90,7 +231,7 @@
     const csrf = getCsrf();
     return apiPost(
       "https://api.bilibili.com/x/v3/fav/resource/deal",
-      `rid=${aid}&type=2&add_media_ids=${folderId}&csrf=${csrf}`,
+      `rid=${aid}&type=2&add_media_ids=${folderId}&csrf=${encodeURIComponent(csrf)}`,
     );
   }
 
@@ -98,8 +239,14 @@
     const csrf = getCsrf();
     return apiPost(
       "https://api.bilibili.com/x/v3/fav/resource/deal",
-      `rid=${aid}&type=2&del_media_ids=${folderId}&csrf=${csrf}`,
+      `rid=${aid}&type=2&del_media_ids=${folderId}&csrf=${encodeURIComponent(csrf)}`,
     );
+  }
+
+  async function delFavFolders(aid, folderIds) {
+    const uniqueIds = [...new Set(folderIds.map((id) => String(id)).filter(Boolean))];
+    if (uniqueIds.length === 0) return { code: -1, message: "no favorite folders" };
+    return delFav(aid, uniqueIds.join(","));
   }
 
   // ===== 收藏夹选择弹窗 =====
@@ -199,13 +346,24 @@
     let folderId = GM_getValue(FAV_FOLDER_KEY, null);
     if (folderId) return folderId;
 
-    const uid = await getUid();
-    const folders = await getFavFolders(uid);
-    if (folders.length === 0) {
-      alert("你还没有收藏夹，请先在 B 站创建一个收藏夹。");
-      return null;
-    }
-    return showFolderPicker(folders);
+    // 并发调用时复用同一个 picker，避免打开多个弹窗
+    if (folderPickerPromise) return folderPickerPromise;
+
+    folderPickerPromise = (async () => {
+      try {
+        const uid = await getUid();
+        const folders = await getFavFolders(uid);
+        if (folders.length === 0) {
+          alert("你还没有收藏夹，请先在 B 站创建一个收藏夹。");
+          return null;
+        }
+        return showFolderPicker(folders);
+      } finally {
+        folderPickerPromise = null;
+      }
+    })();
+
+    return folderPickerPromise;
   }
 
   // ===== 按钮 SVG 图标 =====
@@ -221,7 +379,59 @@
     </svg>`;
   }
 
+  function setButtonVisualState(btn, filled, dark = false, size = 20) {
+    if (!btn) return;
+    btn.innerHTML = starSvg(filled, dark, size);
+    btn.classList.toggle("qfav-active", filled);
+    btn.classList.remove("qfav-state-pending");
+  }
+
+  function syncFavVisualState(aid, faved) {
+    favCache.set(aid, faved);
+    document
+      .querySelectorAll(`.qfav-btn[data-qfav-aid="${aid}"]`)
+      .forEach((button) => setButtonVisualState(button, faved));
+    document
+      .querySelectorAll(`.qfav-detail-btn[data-qfav-aid="${aid}"]`)
+      .forEach((button) => setButtonVisualState(button, faved, true, 28));
+  }
+
+  function clearFavState(aid) {
+    favCache.delete(aid);
+  }
+
+  function isFavoritesCollectionPage() {
+    return (
+      location.pathname.includes("/favlist") ||
+      /\/medialist\/play\/ml/.test(location.pathname)
+    );
+  }
+
   // ===== 注入 CSS =====
+  const COVER_CARD_SELECTORS = [
+    ".bili-video-card",
+    ".video-card",
+    ".small-item",
+    ".video-list-item",
+    ".fav-video-list .items .item",
+    ".feed-card",
+    ".bili-feed-card",
+    ".bili-dyn-card-video",
+  ];
+  const LINK_CARD_FALLBACK_SELECTOR = [
+    ".bili-dyn-card-video",
+    ".bili-feed-card",
+    ".feed-card",
+    ".bili-video-card",
+    ".video-card",
+    ".small-item",
+    ".video-list-item",
+    ".fav-video-list .items .item",
+    "article",
+    'a[href*="/video/BV"]',
+  ].join(",");
+  const MEDIA_HINT_SELECTOR = "img, picture, video, canvas";
+  const COVER_CARD_SELECTOR = COVER_CARD_SELECTORS.join(",");
 
   function injectStyles() {
     const style = document.createElement("style");
@@ -242,24 +452,39 @@
         transition: opacity 0.2s, transform 0.15s;
         z-index: 10000;
         border: none;
+        outline: none;
         padding: 0;
-        pointer-events: auto;
+        pointer-events: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .qfav-btn:focus,
+      .qfav-btn:focus-visible {
+        outline: none;
       }
       .qfav-btn:hover {
         transform: scale(1.15);
         background: rgba(0, 0, 0, 0.75);
       }
+      .qfav-btn.qfav-active {
+        background: rgba(0, 174, 236, 0.22);
+      }
+      .qfav-btn.qfav-active:hover {
+        background: rgba(0, 174, 236, 0.32);
+      }
       .qfav-btn.qfav-loading {
         pointer-events: none;
         opacity: 0.5 !important;
       }
-      /* 卡片 hover 时显示按钮 */
-      .bili-video-card:hover .qfav-btn,
-      .video-card:hover .qfav-btn,
-      .small-item:hover .qfav-btn,
-      .video-list-item:hover .qfav-btn {
-        opacity: 1;
+      .qfav-btn.qfav-state-pending {
+        opacity: 0 !important;
+        pointer-events: none;
       }
+      /* 卡片 hover 时显示按钮 */
+      [data-qfav-card="1"]:hover > .qfav-btn:not(.qfav-state-pending) {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
       /* 详情页按钮 —— 视频下方工具栏 */
       .qfav-detail-btn {
         display: inline-flex;
@@ -270,17 +495,30 @@
         background: transparent;
         cursor: pointer;
         border: none;
+        outline: none;
         padding: 0;
         transition: transform 0.15s;
         margin-left: 4px;
         vertical-align: middle;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .qfav-detail-btn:focus,
+      .qfav-detail-btn:focus-visible {
+        outline: none;
       }
       .qfav-detail-btn:hover {
         transform: scale(1.1);
       }
+      .qfav-detail-btn.qfav-active {
+        color: #00aeec;
+      }
       .qfav-detail-btn.qfav-loading {
         pointer-events: none;
         opacity: 0.5;
+      }
+      .qfav-detail-btn.qfav-state-pending {
+        visibility: hidden;
+        pointer-events: none;
       }
       html.qfav-keep-top-bar .bpx-player-control-top,
       html.qfav-keep-top-bar .bpx-player-top-wrap,
@@ -311,33 +549,75 @@
   // ===== 收藏切换逻辑 =====
 
   async function toggleFav(aid, btn, updateIcon) {
-    btn.classList.add("qfav-loading");
-    try {
-      const folderId = await ensureFolderId();
-      if (!folderId) {
-        btn.classList.remove("qfav-loading");
-        return;
-      }
-
-      const isFaved = favCache.get(aid) || false;
-      let result;
-      if (isFaved) {
-        result = await delFav(aid, folderId);
-      } else {
-        result = await addFav(aid, folderId);
-      }
-
-      if (result.code === 0) {
-        favCache.set(aid, !isFaved);
-        updateIcon(!isFaved);
-      } else {
-        console.error("[B站一键收藏] 操作失败:", result.message);
-      }
-    } catch (e) {
-      console.error("[B站一键收藏] 错误:", e);
-    } finally {
-      btn.classList.remove("qfav-loading");
+    // 同一个 aid 正在操作时复用已有 promise，避免竞态
+    if (pendingToggles.has(aid)) {
+      return pendingToggles.get(aid);
     }
+
+    btn.classList.add("qfav-loading");
+
+    const promise = (async () => {
+      const previousVisualFaved =
+        btn.classList.contains("qfav-active") ||
+        favCache.get(aid) === true ||
+        false;
+      const nextVisualFaved = !previousVisualFaved;
+
+      try {
+        syncFavVisualState(aid, nextVisualFaved);
+        updateIcon(nextVisualFaved);
+
+        const folderId = await ensureFolderId();
+        if (!folderId) {
+          syncFavVisualState(aid, previousVisualFaved);
+          updateIcon(previousVisualFaved);
+          return previousVisualFaved;
+        }
+
+        let result;
+        if (nextVisualFaved) {
+          result = await addFav(aid, folderId);
+        } else {
+          const folderStates = await getFavFolderStates(aid);
+          const delFolderIds =
+            folderStates?.selectedFolderIds?.length > 0
+              ? folderStates.selectedFolderIds
+              : [folderId];
+          result = await delFavFolders(aid, delFolderIds);
+        }
+
+        if (result.code === 0) {
+          const confirmedVisualFaved =
+            (await confirmFavState(aid, nextVisualFaved)) ?? nextVisualFaved;
+          syncFavVisualState(aid, confirmedVisualFaved);
+          return confirmedVisualFaved;
+        } else {
+          console.error("[B站一键收藏] 操作失败:", result.message);
+          clearFavState(aid);
+          syncFavVisualState(aid, previousVisualFaved);
+          updateIcon(previousVisualFaved);
+          return previousVisualFaved;
+        }
+      } catch (e) {
+        console.error("[B站一键收藏] 错误:", e);
+        clearFavState(aid);
+        syncFavVisualState(aid, previousVisualFaved);
+        updateIcon(previousVisualFaved);
+        return previousVisualFaved;
+      } finally {
+        btn.classList.remove("qfav-loading");
+        pendingToggles.delete(aid);
+      }
+    })();
+
+    pendingToggles.set(aid, promise);
+    return promise;
+  }
+
+  function stopButtonEvent(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
   }
 
   // ===== 提取 BVID =====
@@ -370,55 +650,79 @@
 
   function injectCoverButton(cardEl, bvid) {
     if (cardEl.querySelector(".qfav-btn")) return;
+    cardEl.setAttribute(CARD_HOVER_ATTR, "1");
 
     // 确保卡片有 position relative
     const pos = getComputedStyle(cardEl).position;
     if (pos === "static") cardEl.style.position = "relative";
 
     const btn = document.createElement("button");
+    btn.type = "button";
     btn.className = "qfav-btn";
     btn.title = "快捷收藏";
-    btn.innerHTML = starSvg(false);
+    if (isFavoritesCollectionPage()) {
+      setButtonVisualState(btn, true);
+    } else {
+      setButtonVisualState(btn, false);
+      btn.classList.add("qfav-state-pending");
+    }
+
+    ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
+      (eventName) => {
+        btn.addEventListener(eventName, stopButtonEvent, true);
+      },
+    );
 
     // 阻止点击事件冒泡（避免跳转到视频页）
-    btn.addEventListener("click", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
+    btn.addEventListener(
+      "click",
+      async (e) => {
+        stopButtonEvent(e);
 
-      const aid = await getAid(bvid);
-      if (!aid) return;
+        try {
+          const aid = await getAid(bvid);
+          if (!aid) return;
+          btn.dataset.qfavAid = String(aid);
 
-      await toggleFav(aid, btn, (faved) => {
-        btn.innerHTML = starSvg(faved);
-        if (faved) {
-          btn.classList.add("qfav-active");
-        } else {
-          btn.classList.remove("qfav-active");
+          bumpFavStateSeq(aid);
+
+          await toggleFav(aid, btn, (faved) => {
+            setButtonVisualState(btn, faved);
+          });
+        } catch (err) {
+          console.error("[B站一键收藏] 收藏操作出错:", err);
         }
-      });
-    });
+      },
+      true,
+    );
 
     cardEl.appendChild(btn);
+
+    if (isFavoritesCollectionPage()) {
+      return;
+    }
 
     // 异步查询收藏状态并更新图标
     (async () => {
       try {
-        const folderId = GM_getValue(FAV_FOLDER_KEY, null);
-        if (!folderId) return;
         const aid = await getAid(bvid);
         if (!aid) return;
+        btn.dataset.qfavAid = String(aid);
 
         if (!favCache.has(aid)) {
-          const faved = await checkFavoured(aid, folderId);
-          favCache.set(aid, faved);
+          const seq = getFavStateSeq(aid);
+          const anyFaved = await checkAnyFavoured(aid);
+          if (getFavStateSeq(aid) !== seq) return;
+          if (anyFaved === null) {
+            setButtonVisualState(btn, false);
+            return;
+          }
+          syncFavVisualState(aid, anyFaved);
+          return;
         }
-        const isFaved = favCache.get(aid);
-        if (isFaved) {
-          btn.innerHTML = starSvg(true);
-          btn.classList.add("qfav-active");
-        }
+        setButtonVisualState(btn, favCache.get(aid) === true);
       } catch (_) {
-        // 静默失败
+        setButtonVisualState(btn, false);
       }
     })();
   }
@@ -443,26 +747,79 @@
     return !!(el && el.closest && el.closest(HEADER_GUARD_SELECTOR));
   }
 
+  function normalizeVideoCardTarget(target) {
+    if (!target || isInsideHeader(target)) return null;
+
+    const nestedCover = target.matches?.(COVER_CARD_SELECTOR)
+      ? target
+      : target.querySelector?.(COVER_CARD_SELECTOR);
+    if (nestedCover && !isInsideHeader(nestedCover)) {
+      return nestedCover;
+    }
+
+    if (
+      target.matches?.(MEDIA_HINT_SELECTOR) ||
+      target.querySelector?.(MEDIA_HINT_SELECTOR)
+    ) {
+      return target;
+    }
+
+    return null;
+  }
+
+  function collectVideoCardTargets() {
+    const targets = new Set();
+
+    document.querySelectorAll(COVER_CARD_SELECTOR).forEach((card) => {
+      const target = normalizeVideoCardTarget(card);
+      if (target) {
+        targets.add(target);
+      }
+    });
+
+    document.querySelectorAll('a[href*="/video/BV"]').forEach((link) => {
+      const card = normalizeVideoCardTarget(
+        link.closest(LINK_CARD_FALLBACK_SELECTOR) || link.parentElement || link,
+      );
+      if (card) {
+        targets.add(card);
+      }
+    });
+
+    const items = Array.from(targets).map((target) => ({
+      target,
+      bvid: extractBvid(target),
+    }));
+
+    return items
+      .filter(({ target, bvid }) => {
+        if (!bvid) return false;
+        return !items.some(
+          (other) =>
+            other.target !== target &&
+            other.bvid === bvid &&
+            target.contains(other.target),
+        );
+      })
+      .map(({ target }) => target);
+  }
+
   function scanVideoCards() {
-    // B 站各种页面的视频卡片选择器
-    const selectors = [
-      ".bili-video-card",
-      ".video-card",
-      ".small-item",
-      ".video-list-item",
-      ".fav-video-list .items .item", // 收藏夹页面
-    ];
-
-    const cards = document.querySelectorAll(selectors.join(","));
-
-    cards.forEach((card) => {
-      if (card.hasAttribute(PROCESSED_ATTR)) return;
-      if (isInsideHeader(card)) return; // 不碰 header 内部的卡片
-      card.setAttribute(PROCESSED_ATTR, "1");
+    collectVideoCardTargets().forEach((card) => {
+      if (isInsideHeader(card)) return;
 
       const bvid = extractBvid(card);
-      if (!bvid) return;
+      if (!bvid) return; // 骨架屏阶段无 BV ID，不打标记，等内容填入后再处理
 
+      if (card.hasAttribute(PROCESSED_ATTR)) {
+        if (card.dataset.qfavBvid === bvid) return;
+        card.querySelectorAll(":scope > .qfav-btn").forEach((btn) => btn.remove());
+        card.removeAttribute(PROCESSED_ATTR);
+        card.removeAttribute(CARD_HOVER_ATTR);
+      }
+
+      card.dataset.qfavBvid = bvid;
+      card.setAttribute(PROCESSED_ATTR, "1");
       injectCoverButton(card, bvid);
     });
   }
@@ -478,7 +835,8 @@
       return;
     }
 
-    if (document.querySelector(".qfav-detail-btn")) return;
+    const existingBtn = document.querySelector(".qfav-detail-btn");
+    if (existingBtn && existingBtn.isConnected) return;
 
     const bvid = match[1];
     const ICON_SIZE = 28;
@@ -494,20 +852,44 @@
     if (isInsideHeader(toolbar)) return;
 
     const btn = document.createElement("button");
+    btn.type = "button";
     btn.className = "qfav-detail-btn";
     btn.title = "快捷收藏";
-    btn.innerHTML = starSvg(false, true, ICON_SIZE);
+    const nativeFavState = getNativeFavoriteState();
+    if (nativeFavState !== null) {
+      setButtonVisualState(btn, nativeFavState, true, ICON_SIZE);
+    } else {
+      setButtonVisualState(btn, false, true, ICON_SIZE);
+      btn.classList.add("qfav-state-pending");
+    }
 
-    btn.addEventListener("click", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const aid = await getAid(bvid);
-      if (!aid) return;
+    ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
+      (eventName) => {
+        btn.addEventListener(eventName, stopButtonEvent, true);
+      },
+    );
 
-      await toggleFav(aid, btn, (faved) => {
-        btn.innerHTML = starSvg(faved, true, ICON_SIZE);
-      });
-    });
+    btn.addEventListener(
+      "click",
+      async (e) => {
+        stopButtonEvent(e);
+
+        try {
+          const aid = await getAid(bvid);
+          if (!aid) return;
+          btn.dataset.qfavAid = String(aid);
+
+          bumpFavStateSeq(aid);
+
+          await toggleFav(aid, btn, (faved) => {
+            setButtonVisualState(btn, faved, true, ICON_SIZE);
+          });
+        } catch (err) {
+          console.error("[B站一键收藏] 收藏操作出错:", err);
+        }
+      },
+      true,
+    );
 
     toolbar.appendChild(btn);
     detailBtnInjected = true;
@@ -515,15 +897,28 @@
     // 查询初始状态
     (async () => {
       try {
-        const folderId = GM_getValue(FAV_FOLDER_KEY, null);
-        if (!folderId) return;
         const aid = await getAid(bvid);
         if (!aid) return;
+        btn.dataset.qfavAid = String(aid);
 
-        const faved = await checkFavoured(aid, folderId);
-        favCache.set(aid, faved);
-        if (faved) {
-          btn.innerHTML = starSvg(true, true, ICON_SIZE);
+        if (nativeFavState !== null) {
+          syncFavVisualState(aid, nativeFavState);
+          setButtonVisualState(btn, nativeFavState, true, ICON_SIZE);
+        }
+
+        const seq = getFavStateSeq(aid);
+        const anyFaved = await checkAnyFavoured(aid);
+        if (getFavStateSeq(aid) !== seq) return;
+        const finalVisualState =
+          anyFaved !== null
+            ? anyFaved
+            : nativeFavState !== null
+              ? nativeFavState
+              : null;
+        if (finalVisualState !== null) {
+          syncFavVisualState(aid, finalVisualState);
+          setButtonVisualState(btn, finalVisualState, true, ICON_SIZE);
+          btn.dataset.qfavStateReady = "1";
         }
       } catch (_) {}
     })();
@@ -541,6 +936,7 @@
     "/video/",
     "/bangumi/play/",
     "/medialist/play/",
+    "/list/",
   ];
   const MAIN_VIDEO_SELECTOR = [
     ".bpx-player-video-wrap video",
@@ -875,47 +1271,6 @@
     fastApplyFrame = requestAnimationFrame(tick);
   }
 
-  // 在 video 元素被插入 DOM 的瞬间同步写入 defaultPlaybackRate，
-  // 赶在首帧渲染之前生效，避免用户看到 1.0x 闪一下再切 1.5x。
-  let earlyVideoObserver = null;
-
-  function applyEarlyRate(video) {
-    if (!(video instanceof HTMLMediaElement)) return;
-    try {
-      video.defaultPlaybackRate = DEFAULT_PLAYBACK_RATE;
-    } catch (_) {}
-    try {
-      video.playbackRate = DEFAULT_PLAYBACK_RATE;
-    } catch (_) {}
-  }
-
-  function startEarlyVideoInterceptor() {
-    if (!ENABLE_DEFAULT_RATE || earlyVideoObserver) return;
-    const root = document.documentElement;
-    if (!root) return;
-
-    earlyVideoObserver = new MutationObserver((mutations) => {
-      if (!isSupportedPlaybackPage()) return;
-      for (const m of mutations) {
-        m.addedNodes.forEach((node) => {
-          if (node.nodeType !== 1) return;
-          if (node.tagName === "VIDEO") {
-            applyEarlyRate(node);
-          } else if (node.querySelectorAll) {
-            node.querySelectorAll("video").forEach(applyEarlyRate);
-          }
-        });
-      }
-    });
-
-    earlyVideoObserver.observe(root, { childList: true, subtree: true });
-
-    // 兜底：覆盖已经存在的 video（比如脚本启动稍晚于元素创建）
-    if (isSupportedPlaybackPage()) {
-      document.querySelectorAll("video").forEach(applyEarlyRate);
-    }
-  }
-
   if (ENABLE_DEFAULT_RATE) {
     document.addEventListener(
       "click",
@@ -963,19 +1318,169 @@
 
   // ===== MutationObserver 监听 DOM 变化 =====
 
+  function isFavoritesPage() {
+    return /space\.bilibili\.com\/\d+\/favlist/.test(location.href);
+  }
+
+  function getFavoritesSpaceMid() {
+    const match = location.pathname.match(/\/(\d+)\/favlist/);
+    return match ? match[1] : null;
+  }
+
+  function getCurrentFavoriteFolderId() {
+    return new URLSearchParams(location.search).get("fid");
+  }
+
+  function makeFavoriteFolderUrl(upMid, folderId) {
+    return `https://space.bilibili.com/${upMid}/favlist?fid=${folderId}&ftype=create`;
+  }
+
+  function findCreatedFavoritesCollapse() {
+    return Array.from(
+      document.querySelectorAll(".fav-collapse, .vui_collapse_item"),
+    ).find((item) => {
+      const header =
+        item.querySelector(".vui_collapse_item_header") ||
+        item.firstElementChild ||
+        item;
+      return (header.textContent || "").includes("我创建的收藏夹");
+    });
+  }
+
+  function getCreatedFavoritesContainer(collapse) {
+    return (
+      collapse?.querySelector(".fav-collapse-wrap") ||
+      collapse?.querySelector(".vui_collapse_item_content") ||
+      null
+    );
+  }
+
+  function hasRenderedFavoriteFolder(folder) {
+    const folderTitle = String(folder.title || "").trim();
+    return Array.from(
+      document.querySelectorAll(".fav-sidebar-item, .vui_sidebar-item, a"),
+    ).some((item) => {
+      const titleText = (
+        item.querySelector(".vui_sidebar-item-title")?.textContent ||
+        item.textContent ||
+        ""
+      ).trim();
+      const href = item.href || "";
+      return (
+        href.includes(`fid=${folder.id}`) ||
+        titleText === folderTitle
+      );
+    });
+  }
+
+  function createFavoriteFolderSidebarItem(folder, upMid) {
+    const link = document.createElement("a");
+    link.className = "fav-sidebar-item qfav-repaired-folder";
+    link.href = makeFavoriteFolderUrl(upMid, folder.id);
+    link.title = folder.title || "收藏夹";
+    link.style.display = "block";
+    link.style.textDecoration = "none";
+
+    const row = document.createElement("div");
+    row.className = "vui_sidebar-item";
+    Object.assign(row.style, {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      minHeight: "36px",
+      padding: "0 12px",
+      borderRadius: "6px",
+      color: "#18191c",
+      boxSizing: "border-box",
+    });
+
+    const title = document.createElement("div");
+    title.className = "vui_sidebar-item-title vui_ellipsis multi-mode";
+    title.textContent = folder.title || "收藏夹";
+    Object.assign(title.style, {
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    });
+
+    const count = document.createElement("span");
+    count.textContent = String(folder.media_count ?? "");
+    Object.assign(count.style, {
+      marginLeft: "8px",
+      color: "#9499a0",
+      fontSize: "12px",
+      flex: "0 0 auto",
+    });
+
+    row.append(title, count);
+    link.appendChild(row);
+    return link;
+  }
+
+  async function repairFavoritesSidebar() {
+    if (!isFavoritesPage()) return;
+
+    const upMid = getFavoritesSpaceMid();
+    if (!upMid) return;
+
+    const folders = (await getCreatedFavFolders(upMid)).filter(
+      (folder) => folder?.id && folder?.title,
+    );
+    if (folders.length === 0) return;
+
+    const collapse = findCreatedFavoritesCollapse();
+    const container = getCreatedFavoritesContainer(collapse);
+    if (!container) return;
+
+    const missingFolders = folders.filter((folder) => !hasRenderedFavoriteFolder(folder));
+    if (missingFolders.length > 0) {
+      const createButton = container.querySelector(".fav-collapse-create");
+      missingFolders.forEach((folder) => {
+        container.insertBefore(
+          createFavoriteFolderSidebarItem(folder, upMid),
+          createButton || null,
+        );
+      });
+    }
+
+    const titleText = document.querySelector(".favlist-info-detail__title-row");
+    const appearsOnBrokenDefault =
+      !getCurrentFavoriteFolderId() &&
+      titleText &&
+      (titleText.textContent || "").includes("未命名收藏夹");
+    if (appearsOnBrokenDefault) {
+      location.replace(makeFavoriteFolderUrl(upMid, folders[0].id));
+    }
+  }
+
+  function getScanDelay() {
+    return isFavoritesPage() ? FAVORITES_BOOTSTRAP_DELAY_MS : DOM_BOOTSTRAP_DELAY_MS;
+  }
+
   function startObserver() {
+    const runDomScan = () => {
+      syncTopBarVisibilityClass();
+      scanVideoCards();
+      if (!isFavoritesPage()) {
+        injectDetailButton();
+        scanVideos();
+      }
+    };
+
     let scanTimer = null;
 
     const observer = new MutationObserver(() => {
-      // 节流：合并短时间内的多次变化
+      // 收藏夹页面内容是异步瀑布流，低频补扫即可，避免错过晚加载的卡片
       if (scanTimer) return;
+      const throttle = isFavoritesPage()
+        ? FAVORITES_SCAN_THROTTLE_MS
+        : DOM_SCAN_THROTTLE_MS;
       scanTimer = setTimeout(() => {
         scanTimer = null;
-        syncTopBarVisibilityClass();
-        scanVideoCards();
-        injectDetailButton();
-        scanVideos();
-      }, 0);
+        // SPA 导航保护期内跳过，避免在 Vue 挂载过程中干扰渲染
+        if (Date.now() < navGuardUntil) return;
+        runDomScan();
+      }, throttle);
     });
 
     observer.observe(document.body, {
@@ -983,11 +1488,18 @@
       subtree: true,
     });
 
-    // 初始扫描
-    syncTopBarVisibilityClass();
-    scanVideoCards();
-    injectDetailButton();
-    scanVideos();
+    // startObserver 本身已经由 bootstrap 延迟启动，这里不要再叠加一轮延迟
+    runDomScan();
+    repairFavoritesSidebar();
+
+    if (isFavoritesPage()) {
+      FAVORITES_EXTRA_SCAN_DELAYS.forEach((delay) => {
+        setTimeout(runDomScan, delay);
+      });
+      FAVORITES_SIDEBAR_REPAIR_DELAYS.forEach((delay) => {
+        setTimeout(repairFavoritesSidebar, delay);
+      });
+    }
   }
 
   // ===== 监听 SPA 路由变化 =====
@@ -998,12 +1510,15 @@
       if (location.href !== lastUrl) {
         lastUrl = location.href;
         detailBtnInjected = false;
+        favCache.clear();
+        const scanDelay = getScanDelay();
+        navGuardUntil = Date.now() + scanDelay; // 保护期：屏蔽 Observer 在挂载窗口内的扫描
         syncTopBarVisibilityClass();
         ensureChromeVisibilityObserver();
         enforcePlayerChromeVisibility();
         stopFastRateBootstrap();
         startFastRateBootstrap();
-        // 路由变化后重新扫描
+        // 路由变化后重新扫描，收藏夹页面给更长时间等 B站渲染完成
         setTimeout(() => {
           syncTopBarVisibilityClass();
           ensureChromeVisibilityObserver();
@@ -1011,7 +1526,8 @@
           scanVideoCards();
           injectDetailButton();
           scanVideos();
-        }, 0);
+          repairFavoritesSidebar();
+        }, scanDelay);
       }
     };
 
@@ -1036,11 +1552,11 @@
     ensureChromeVisibilityObserver();
     enforcePlayerChromeVisibility();
     // 延迟 DOM 扫描/注入，避免在 B 站 SPA 初始挂载期间干扰框架
-    setTimeout(startObserver, DOM_BOOTSTRAP_DELAY_MS);
+    // 收藏夹页面给更长时间（3s），避免干扰 B站空间页面渲染
+    setTimeout(startObserver, getScanDelay());
   }
 
   watchNavigation();
-  startEarlyVideoInterceptor();
   startFastRateBootstrap();
   ensureChromeVisibilityObserver();
   enforcePlayerChromeVisibility();
