@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.53
+// @version      1.54
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @match        *://*.bilibili.com/*
@@ -30,6 +30,7 @@
   const FAVORITES_SCAN_THROTTLE_MS = 500;
   const FAVORITES_EXTRA_SCAN_DELAYS = [2000, 5000, 8000];
   const FAVORITES_SIDEBAR_REPAIR_DELAYS = [3500, 7000, 11000];
+  const HEADER_MOUNT_RETRY_MS = 250;
 
   // ===== 收藏状态缓存 =====
   const favCache = new Map();
@@ -520,6 +521,14 @@
         visibility: hidden;
         pointer-events: none;
       }
+      .qfav-detail-btn.qfav-detail-floating {
+        position: fixed;
+        margin-left: 0;
+        z-index: 1003;
+      }
+      .qfav-detail-btn.qfav-detail-hidden {
+        display: none;
+      }
       html.qfav-keep-top-bar .bpx-player-control-top,
       html.qfav-keep-top-bar .bpx-player-top-wrap,
       html.qfav-keep-top-bar .bilibili-player-video-top,
@@ -664,8 +673,41 @@
       setButtonVisualState(btn, true);
     } else {
       setButtonVisualState(btn, false);
-      btn.classList.add("qfav-state-pending");
     }
+
+    let initialStatePromise = null;
+    const loadInitialCoverState = async () => {
+      if (isFavoritesCollectionPage() || btn.dataset.qfavStateReady === "1") return;
+
+      if (!initialStatePromise) {
+        initialStatePromise = (async () => {
+          try {
+            const aid = await getAid(bvid);
+            if (!aid || !btn.isConnected) return;
+            btn.dataset.qfavAid = String(aid);
+
+            if (!favCache.has(aid)) {
+              const seq = getFavStateSeq(aid);
+              const anyFaved = await checkAnyFavoured(aid);
+              if (getFavStateSeq(aid) !== seq || !btn.isConnected) return;
+              syncFavVisualState(aid, anyFaved === true);
+              btn.dataset.qfavStateReady = "1";
+              return;
+            }
+
+            setButtonVisualState(btn, favCache.get(aid) === true);
+            btn.dataset.qfavStateReady = "1";
+          } catch (_) {
+            setButtonVisualState(btn, false);
+            btn.dataset.qfavStateReady = "1";
+          } finally {
+            initialStatePromise = null;
+          }
+        })();
+      }
+
+      return initialStatePromise;
+    };
 
     ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
       (eventName) => {
@@ -680,6 +722,7 @@
         stopButtonEvent(e);
 
         try {
+          await loadInitialCoverState();
           const aid = await getAid(bvid);
           if (!aid) return;
           btn.dataset.qfavAid = String(aid);
@@ -702,29 +745,10 @@
       return;
     }
 
-    // 异步查询收藏状态并更新图标
-    (async () => {
-      try {
-        const aid = await getAid(bvid);
-        if (!aid) return;
-        btn.dataset.qfavAid = String(aid);
-
-        if (!favCache.has(aid)) {
-          const seq = getFavStateSeq(aid);
-          const anyFaved = await checkAnyFavoured(aid);
-          if (getFavStateSeq(aid) !== seq) return;
-          if (anyFaved === null) {
-            setButtonVisualState(btn, false);
-            return;
-          }
-          syncFavVisualState(aid, anyFaved);
-          return;
-        }
-        setButtonVisualState(btn, favCache.get(aid) === true);
-      } catch (_) {
-        setButtonVisualState(btn, false);
-      }
-    })();
+    cardEl.addEventListener("pointerenter", loadInitialCoverState, {
+      passive: true,
+    });
+    cardEl.addEventListener("focusin", loadInitialCoverState);
   }
 
   // ===== 扫描并注入封面按钮 =====
@@ -745,6 +769,31 @@
 
   function isInsideHeader(el) {
     return !!(el && el.closest && el.closest(HEADER_GUARD_SELECTOR));
+  }
+
+  function isBiliHeaderMountPending() {
+    if (
+      location.hostname !== "www.bilibili.com" ||
+      !isSupportedPlaybackPage()
+    ) {
+      return false;
+    }
+
+    const header = document.querySelector("#biliMainHeader");
+    if (!header) return true;
+    return !(header.innerText || "").trim();
+  }
+
+  function runWhenBiliHeaderReady(callback) {
+    if (isBiliHeaderMountPending()) {
+      setTimeout(
+        () => runWhenBiliHeaderReady(callback),
+        HEADER_MOUNT_RETRY_MS,
+      );
+      return;
+    }
+
+    callback();
   }
 
   function normalizeVideoCardTarget(target) {
@@ -828,40 +877,133 @@
 
   let detailBtnInjected = false;
 
+  function findDetailToolbar() {
+    return (
+      document.querySelector(".video-toolbar-left") ||
+      document.querySelector(".video-toolbar") ||
+      document.querySelector("#toolbar_module") ||
+      document.querySelector(".video-info-detail")
+    );
+  }
+
+  function positionFloatingDetailButton(btn) {
+    const toolbar = findDetailToolbar();
+    if (!toolbar || isInsideHeader(toolbar)) {
+      btn.classList.add("qfav-detail-hidden");
+      return;
+    }
+
+    const rect = toolbar.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      btn.classList.add("qfav-detail-hidden");
+      return;
+    }
+
+    const left = Math.min(
+      window.innerWidth - 54,
+      Math.max(8, Math.round(rect.right + 4)),
+    );
+    const top = Math.min(
+      window.innerHeight - 54,
+      Math.max(8, Math.round(rect.top)),
+    );
+
+    btn.style.left = `${left}px`;
+    btn.style.top = `${top}px`;
+    btn.classList.remove("qfav-detail-hidden");
+  }
+
+  function bindFloatingDetailButtonPosition(btn) {
+    const controller = new AbortController();
+    const update = () => {
+      if (!btn.isConnected) {
+        controller.abort();
+        return;
+      }
+      positionFloatingDetailButton(btn);
+    };
+
+    window.addEventListener("resize", update, {
+      passive: true,
+      signal: controller.signal,
+    });
+    window.addEventListener("scroll", update, {
+      passive: true,
+      signal: controller.signal,
+    });
+    [0, 500, 1500, 3000].forEach((delay) => setTimeout(update, delay));
+  }
+
   function injectDetailButton() {
     const match = location.pathname.match(/\/video\/(BV[\w]+)/);
     if (!match) {
       detailBtnInjected = false;
+      document.querySelectorAll(".qfav-detail-btn").forEach((btn) => btn.remove());
       return;
     }
 
-    const existingBtn = document.querySelector(".qfav-detail-btn");
-    if (existingBtn && existingBtn.isConnected) return;
-
     const bvid = match[1];
+    const existingBtn = document.querySelector(".qfav-detail-btn");
+    if (existingBtn && existingBtn.isConnected) {
+      if (existingBtn.dataset.qfavBvid === bvid) {
+        positionFloatingDetailButton(existingBtn);
+        return;
+      }
+      existingBtn.remove();
+    }
+
     const ICON_SIZE = 28;
 
-    // 回到原位置：视频下方的工具栏（点赞/投币/收藏/分享 那一排）
-    const toolbar =
-      document.querySelector(".video-toolbar-left") ||
-      document.querySelector(".video-toolbar") ||
-      document.querySelector("#toolbar_module") ||
-      document.querySelector(".video-info-detail");
-
+    const toolbar = findDetailToolbar();
     if (!toolbar) return;
     if (isInsideHeader(toolbar)) return;
 
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "qfav-detail-btn";
+    btn.className = "qfav-detail-btn qfav-detail-floating qfav-detail-hidden";
     btn.title = "快捷收藏";
+    btn.dataset.qfavBvid = bvid;
     const nativeFavState = getNativeFavoriteState();
     if (nativeFavState !== null) {
       setButtonVisualState(btn, nativeFavState, true, ICON_SIZE);
+      btn.dataset.qfavStateReady = "1";
     } else {
       setButtonVisualState(btn, false, true, ICON_SIZE);
-      btn.classList.add("qfav-state-pending");
     }
+
+    let initialStatePromise = null;
+    const loadInitialDetailState = async () => {
+      if (btn.dataset.qfavStateReady === "1") return;
+
+      if (!initialStatePromise) {
+        initialStatePromise = (async () => {
+          try {
+            const aid = await getAid(bvid);
+            if (!aid || !btn.isConnected) return;
+            btn.dataset.qfavAid = String(aid);
+
+            const seq = getFavStateSeq(aid);
+            const anyFaved = await checkAnyFavoured(aid);
+            if (getFavStateSeq(aid) !== seq || !btn.isConnected) return;
+            const finalState =
+              anyFaved !== null
+                ? anyFaved
+                : getNativeFavoriteState() === true;
+            syncFavVisualState(aid, finalState);
+            setButtonVisualState(btn, finalState, true, ICON_SIZE);
+            btn.dataset.qfavStateReady = "1";
+          } catch (_) {
+            const fallbackState = getNativeFavoriteState() === true;
+            setButtonVisualState(btn, fallbackState, true, ICON_SIZE);
+            btn.dataset.qfavStateReady = "1";
+          } finally {
+            initialStatePromise = null;
+          }
+        })();
+      }
+
+      return initialStatePromise;
+    };
 
     ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
       (eventName) => {
@@ -875,6 +1017,7 @@
         stopButtonEvent(e);
 
         try {
+          await loadInitialDetailState();
           const aid = await getAid(bvid);
           if (!aid) return;
           btn.dataset.qfavAid = String(aid);
@@ -891,37 +1034,13 @@
       true,
     );
 
-    toolbar.appendChild(btn);
+    document.body.appendChild(btn);
     detailBtnInjected = true;
-
-    // 查询初始状态
-    (async () => {
-      try {
-        const aid = await getAid(bvid);
-        if (!aid) return;
-        btn.dataset.qfavAid = String(aid);
-
-        if (nativeFavState !== null) {
-          syncFavVisualState(aid, nativeFavState);
-          setButtonVisualState(btn, nativeFavState, true, ICON_SIZE);
-        }
-
-        const seq = getFavStateSeq(aid);
-        const anyFaved = await checkAnyFavoured(aid);
-        if (getFavStateSeq(aid) !== seq) return;
-        const finalVisualState =
-          anyFaved !== null
-            ? anyFaved
-            : nativeFavState !== null
-              ? nativeFavState
-              : null;
-        if (finalVisualState !== null) {
-          syncFavVisualState(aid, finalVisualState);
-          setButtonVisualState(btn, finalVisualState, true, ICON_SIZE);
-          btn.dataset.qfavStateReady = "1";
-        }
-      } catch (_) {}
-    })();
+    bindFloatingDetailButtonPosition(btn);
+    btn.addEventListener("pointerenter", loadInitialDetailState, {
+      passive: true,
+    });
+    btn.addEventListener("focusin", loadInitialDetailState);
   }
 
   // ===== 默认播放倍速 =====
@@ -966,6 +1085,7 @@
   let fastApplyFrame = 0;
   let fastApplyDeadline = 0;
   let chromeVisibilityObserver = null;
+  let navigationWatchStarted = false;
 
   let lastSpeedClickAt = 0;
 
@@ -1459,6 +1579,7 @@
 
   function startObserver() {
     const runDomScan = () => {
+      if (isBiliHeaderMountPending()) return;
       syncTopBarVisibilityClass();
       scanVideoCards();
       if (!isFavoritesPage()) {
@@ -1505,6 +1626,9 @@
   // ===== 监听 SPA 路由变化 =====
 
   function watchNavigation() {
+    if (navigationWatchStarted) return;
+    navigationWatchStarted = true;
+
     let lastUrl = location.href;
     const check = () => {
       if (location.href !== lastUrl) {
@@ -1520,6 +1644,7 @@
         startFastRateBootstrap();
         // 路由变化后重新扫描，收藏夹页面给更长时间等 B站渲染完成
         setTimeout(() => {
+          if (isBiliHeaderMountPending()) return;
           syncTopBarVisibilityClass();
           ensureChromeVisibilityObserver();
           enforcePlayerChromeVisibility();
@@ -1531,35 +1656,23 @@
       }
     };
 
-    // pushState / replaceState 拦截
-    const origPush = history.pushState;
-    history.pushState = function (...args) {
-      origPush.apply(this, args);
-      check();
-    };
-    const origReplace = history.replaceState;
-    history.replaceState = function (...args) {
-      origReplace.apply(this, args);
-      check();
-    };
     window.addEventListener("popstate", check);
+    window.addEventListener("hashchange", check);
+    window.setInterval(check, 500);
   }
 
   // ===== 启动 =====
 
   function bootstrapDomFeatures() {
     injectStyles();
+    watchNavigation();
+    startFastRateBootstrap();
     ensureChromeVisibilityObserver();
     enforcePlayerChromeVisibility();
     // 延迟 DOM 扫描/注入，避免在 B 站 SPA 初始挂载期间干扰框架
     // 收藏夹页面给更长时间（3s），避免干扰 B站空间页面渲染
-    setTimeout(startObserver, getScanDelay());
+    setTimeout(() => runWhenBiliHeaderReady(startObserver), getScanDelay());
   }
-
-  watchNavigation();
-  startFastRateBootstrap();
-  ensureChromeVisibilityObserver();
-  enforcePlayerChromeVisibility();
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bootstrapDomFeatures, {
