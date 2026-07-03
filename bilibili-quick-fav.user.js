@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.54
+// @version      1.55
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @match        *://*.bilibili.com/*
@@ -521,14 +521,6 @@
         visibility: hidden;
         pointer-events: none;
       }
-      .qfav-detail-btn.qfav-detail-floating {
-        position: fixed;
-        margin-left: 0;
-        z-index: 1003;
-      }
-      .qfav-detail-btn.qfav-detail-hidden {
-        display: none;
-      }
       html.qfav-keep-top-bar .bpx-player-control-top,
       html.qfav-keep-top-bar .bpx-player-top-wrap,
       html.qfav-keep-top-bar .bilibili-player-video-top,
@@ -886,54 +878,6 @@
     );
   }
 
-  function positionFloatingDetailButton(btn) {
-    const toolbar = findDetailToolbar();
-    if (!toolbar || isInsideHeader(toolbar)) {
-      btn.classList.add("qfav-detail-hidden");
-      return;
-    }
-
-    const rect = toolbar.getBoundingClientRect();
-    if (!rect.width || !rect.height) {
-      btn.classList.add("qfav-detail-hidden");
-      return;
-    }
-
-    const left = Math.min(
-      window.innerWidth - 54,
-      Math.max(8, Math.round(rect.right + 4)),
-    );
-    const top = Math.min(
-      window.innerHeight - 54,
-      Math.max(8, Math.round(rect.top)),
-    );
-
-    btn.style.left = `${left}px`;
-    btn.style.top = `${top}px`;
-    btn.classList.remove("qfav-detail-hidden");
-  }
-
-  function bindFloatingDetailButtonPosition(btn) {
-    const controller = new AbortController();
-    const update = () => {
-      if (!btn.isConnected) {
-        controller.abort();
-        return;
-      }
-      positionFloatingDetailButton(btn);
-    };
-
-    window.addEventListener("resize", update, {
-      passive: true,
-      signal: controller.signal,
-    });
-    window.addEventListener("scroll", update, {
-      passive: true,
-      signal: controller.signal,
-    });
-    [0, 500, 1500, 3000].forEach((delay) => setTimeout(update, delay));
-  }
-
   function injectDetailButton() {
     const match = location.pathname.match(/\/video\/(BV[\w]+)/);
     if (!match) {
@@ -943,10 +887,13 @@
     }
 
     const bvid = match[1];
+    const toolbar = findDetailToolbar();
+    if (!toolbar) return;
+    if (isInsideHeader(toolbar)) return;
+
     const existingBtn = document.querySelector(".qfav-detail-btn");
     if (existingBtn && existingBtn.isConnected) {
-      if (existingBtn.dataset.qfavBvid === bvid) {
-        positionFloatingDetailButton(existingBtn);
+      if (existingBtn.dataset.qfavBvid === bvid && toolbar.contains(existingBtn)) {
         return;
       }
       existingBtn.remove();
@@ -954,13 +901,9 @@
 
     const ICON_SIZE = 28;
 
-    const toolbar = findDetailToolbar();
-    if (!toolbar) return;
-    if (isInsideHeader(toolbar)) return;
-
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "qfav-detail-btn qfav-detail-floating qfav-detail-hidden";
+    btn.className = "qfav-detail-btn";
     btn.title = "快捷收藏";
     btn.dataset.qfavBvid = bvid;
     const nativeFavState = getNativeFavoriteState();
@@ -1034,9 +977,8 @@
       true,
     );
 
-    document.body.appendChild(btn);
+    toolbar.appendChild(btn);
     detailBtnInjected = true;
-    bindFloatingDetailButtonPosition(btn);
     btn.addEventListener("pointerenter", loadInitialDetailState, {
       passive: true,
     });
