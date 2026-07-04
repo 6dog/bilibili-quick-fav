@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.57
+// @version      1.58
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @match        *://*.bilibili.com/*
@@ -892,12 +892,12 @@
   }
 
   function findDetailButtonMount() {
-    const rightToolbar = document.querySelector(".video-toolbar-right");
-    if (rightToolbar && !isInsideHeader(rightToolbar)) return rightToolbar;
+    const leftToolbar = document.querySelector(".video-toolbar-left");
+    if (leftToolbar && !isInsideHeader(leftToolbar)) return leftToolbar;
 
     const toolbar = findDetailToolbar();
     if (!toolbar || isInsideHeader(toolbar)) return null;
-    return toolbar.querySelector(".video-toolbar-left-main") || toolbar;
+    return toolbar.querySelector(".video-toolbar-left") || toolbar;
   }
 
   function removeDetailButton(btn) {
