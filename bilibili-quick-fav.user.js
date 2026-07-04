@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.56
+// @version      1.57
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @match        *://*.bilibili.com/*
@@ -491,9 +491,9 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        width: 40px;
+        width: 28px;
         height: 28px;
-        margin-right: 8px;
+        margin-left: 12px;
         flex: 0 0 auto;
       }
       .qfav-detail-btn {
@@ -892,6 +892,9 @@
   }
 
   function findDetailButtonMount() {
+    const rightToolbar = document.querySelector(".video-toolbar-right");
+    if (rightToolbar && !isInsideHeader(rightToolbar)) return rightToolbar;
+
     const toolbar = findDetailToolbar();
     if (!toolbar || isInsideHeader(toolbar)) return null;
     return toolbar.querySelector(".video-toolbar-left-main") || toolbar;
@@ -1004,14 +1007,7 @@
     wrap.className = "qfav-detail-wrap";
     wrap.appendChild(btn);
 
-    const nativeFavWrap =
-      mount.querySelector(".video-fav")?.closest(".toolbar-left-item-wrap") ||
-      null;
-    if (nativeFavWrap?.parentElement === mount) {
-      nativeFavWrap.insertAdjacentElement("afterend", wrap);
-    } else {
-      mount.appendChild(wrap);
-    }
+    mount.appendChild(wrap);
 
     detailBtnInjected = true;
     btn.addEventListener("pointerenter", loadInitialDetailState, {
