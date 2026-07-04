@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.55
+// @version      1.56
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @match        *://*.bilibili.com/*
@@ -487,20 +487,33 @@
       }
 
       /* 详情页按钮 —— 视频下方工具栏 */
+      .qfav-detail-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 28px;
+        margin-right: 8px;
+        flex: 0 0 auto;
+      }
       .qfav-detail-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 46px;
-        height: 46px;
+        width: 28px !important;
+        height: 28px !important;
+        min-width: 28px;
+        min-height: 28px;
         background: transparent;
         cursor: pointer;
         border: none;
         outline: none;
-        padding: 0;
+        padding: 0 !important;
         transition: transform 0.15s;
-        margin-left: 4px;
-        vertical-align: middle;
+        margin: 0 !important;
+        line-height: 28px !important;
+        vertical-align: baseline;
+        flex: 0 0 28px;
         -webkit-tap-highlight-color: transparent;
       }
       .qfav-detail-btn:focus,
@@ -878,25 +891,35 @@
     );
   }
 
+  function findDetailButtonMount() {
+    const toolbar = findDetailToolbar();
+    if (!toolbar || isInsideHeader(toolbar)) return null;
+    return toolbar.querySelector(".video-toolbar-left-main") || toolbar;
+  }
+
+  function removeDetailButton(btn) {
+    const wrap = btn.closest(".qfav-detail-wrap");
+    (wrap || btn).remove();
+  }
+
   function injectDetailButton() {
     const match = location.pathname.match(/\/video\/(BV[\w]+)/);
     if (!match) {
       detailBtnInjected = false;
-      document.querySelectorAll(".qfav-detail-btn").forEach((btn) => btn.remove());
+      document.querySelectorAll(".qfav-detail-btn").forEach(removeDetailButton);
       return;
     }
 
     const bvid = match[1];
-    const toolbar = findDetailToolbar();
-    if (!toolbar) return;
-    if (isInsideHeader(toolbar)) return;
+    const mount = findDetailButtonMount();
+    if (!mount) return;
 
     const existingBtn = document.querySelector(".qfav-detail-btn");
     if (existingBtn && existingBtn.isConnected) {
-      if (existingBtn.dataset.qfavBvid === bvid && toolbar.contains(existingBtn)) {
+      if (existingBtn.dataset.qfavBvid === bvid && mount.contains(existingBtn)) {
         return;
       }
-      existingBtn.remove();
+      removeDetailButton(existingBtn);
     }
 
     const ICON_SIZE = 28;
@@ -977,7 +1000,19 @@
       true,
     );
 
-    toolbar.appendChild(btn);
+    const wrap = document.createElement("div");
+    wrap.className = "qfav-detail-wrap";
+    wrap.appendChild(btn);
+
+    const nativeFavWrap =
+      mount.querySelector(".video-fav")?.closest(".toolbar-left-item-wrap") ||
+      null;
+    if (nativeFavWrap?.parentElement === mount) {
+      nativeFavWrap.insertAdjacentElement("afterend", wrap);
+    } else {
+      mount.appendChild(wrap);
+    }
+
     detailBtnInjected = true;
     btn.addEventListener("pointerenter", loadInitialDetailState, {
       passive: true,
