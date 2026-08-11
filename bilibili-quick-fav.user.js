@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.58
+// @version      1.62
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
+// @homepageURL  https://github.com/6dog/bilibili-quick-fav
+// @supportURL   https://github.com/6dog/bilibili-quick-fav/issues
+// @updateURL    https://raw.githubusercontent.com/6dog/bilibili-quick-fav/main/bilibili-quick-fav.user.js
+// @downloadURL  https://raw.githubusercontent.com/6dog/bilibili-quick-fav/main/bilibili-quick-fav.user.js
 // @match        *://*.bilibili.com/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -23,21 +27,24 @@
   const KEEP_TOP_BAR_VISIBLE = false;
   // 诊断开关：true 启用默认倍速功能；false 则只保留一键收藏（v1.0.0 行为）
   const ENABLE_DEFAULT_RATE = true;
-  // 诊断开关：延迟启动 DOM 扫描/注入，避开 B 站 SPA 挂载窗口
-  const DOM_BOOTSTRAP_DELAY_MS = 1500;
-  const FAVORITES_BOOTSTRAP_DELAY_MS = 3000;
-  const DOM_SCAN_THROTTLE_MS = 200;
-  const FAVORITES_SCAN_THROTTLE_MS = 500;
+  // 卡片本身已有 header 禁区保护，可在 DOM 就绪后立即启动扫描。
+  const PLAYBACK_BOOTSTRAP_DELAY_MS = 1500;
+  const DOM_BOOTSTRAP_DELAY_MS = 0;
+  const FAVORITES_BOOTSTRAP_DELAY_MS = 0;
+  const DOM_SCAN_THROTTLE_MS = 50;
+  const FAVORITES_SCAN_THROTTLE_MS = 80;
   const FAVORITES_EXTRA_SCAN_DELAYS = [2000, 5000, 8000];
   const FAVORITES_SIDEBAR_REPAIR_DELAYS = [3500, 7000, 11000];
-  const HEADER_MOUNT_RETRY_MS = 250;
+  const HEADER_MOUNT_RETRY_MS = 100;
 
   // ===== 收藏状态缓存 =====
   const favCache = new Map();
   const favStateSeq = new Map();
   const pendingToggles = new Map();
+  const coverStateLoaders = new WeakMap();
   let uidPromise = null;
   let folderPickerPromise = null;
+  let coverStateObserver = null;
 
   // SPA 导航保护期截止时间戳（毫秒）；保护期内 MutationObserver 不执行扫描
   let navGuardUntil = 0;
@@ -450,7 +457,7 @@
         justify-content: center;
         cursor: pointer;
         opacity: 0;
-        transition: opacity 0.2s, transform 0.15s;
+        transition: opacity 0.08s, transform 0.15s;
         z-index: 10000;
         border: none;
         outline: none;
@@ -480,12 +487,11 @@
         opacity: 0 !important;
         pointer-events: none;
       }
-      /* 卡片 hover 时显示按钮 */
+      /* 按钮已随卡片提前注入，hover 时只切换显示，不再等待扫描或接口。 */
       [data-qfav-card="1"]:hover > .qfav-btn:not(.qfav-state-pending) {
         opacity: 1;
         pointer-events: auto;
       }
-
       /* 详情页按钮 —— 视频下方工具栏 */
       .qfav-detail-wrap {
         display: flex;
@@ -662,6 +668,31 @@
 
   // ===== 封面按钮注入 =====
 
+  function prefetchCoverStateWhenVisible(btn, loadState) {
+    if (!("IntersectionObserver" in window)) {
+      setTimeout(loadState, 0);
+      return;
+    }
+
+    if (!coverStateObserver) {
+      coverStateObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            coverStateObserver.unobserve(entry.target);
+            const loader = coverStateLoaders.get(entry.target);
+            coverStateLoaders.delete(entry.target);
+            if (loader) void loader();
+          });
+        },
+        { rootMargin: "200px" },
+      );
+    }
+
+    coverStateLoaders.set(btn, loadState);
+    coverStateObserver.observe(btn);
+  }
+
   function injectCoverButton(cardEl, bvid) {
     if (cardEl.querySelector(".qfav-btn")) return;
     cardEl.setAttribute(CARD_HOVER_ATTR, "1");
@@ -750,6 +781,7 @@
       return;
     }
 
+    prefetchCoverStateWhenVisible(btn, loadInitialCoverState);
     cardEl.addEventListener("pointerenter", loadInitialCoverState, {
       passive: true,
     });
@@ -933,12 +965,10 @@
     btn.title = "快捷收藏";
     btn.dataset.qfavBvid = bvid;
     const nativeFavState = getNativeFavoriteState();
-    if (nativeFavState !== null) {
-      setButtonVisualState(btn, nativeFavState, true, ICON_SIZE);
-      btn.dataset.qfavStateReady = "1";
-    } else {
-      setButtonVisualState(btn, false, true, ICON_SIZE);
-    }
+    // 原生收藏按钮会先以未激活状态挂载，再异步补上 `on`。
+    // 这里只用它提供即时视觉反馈，最终状态仍交给接口确认，避免把过早的
+    // “未收藏”快照永久标记为 ready。
+    setButtonVisualState(btn, nativeFavState === true, true, ICON_SIZE);
 
     let initialStatePromise = null;
     const loadInitialDetailState = async () => {
@@ -1010,6 +1040,7 @@
     mount.appendChild(wrap);
 
     detailBtnInjected = true;
+    void loadInitialDetailState();
     btn.addEventListener("pointerenter", loadInitialDetailState, {
       passive: true,
     });
@@ -1547,16 +1578,21 @@
   }
 
   function getScanDelay() {
+    if (isSupportedPlaybackPage()) return PLAYBACK_BOOTSTRAP_DELAY_MS;
     return isFavoritesPage() ? FAVORITES_BOOTSTRAP_DELAY_MS : DOM_BOOTSTRAP_DELAY_MS;
   }
 
   function startObserver() {
     const runDomScan = () => {
+      // 视频页顶部栏由 B 站 SPA 异步挂载；完成前修改页面 DOM 会让 header
+      // 留下一个空壳。非播放页不受此限制，仍可立即扫描。
       if (isBiliHeaderMountPending()) return;
       syncTopBarVisibilityClass();
       scanVideoCards();
       if (!isFavoritesPage()) {
         injectDetailButton();
+      }
+      if (!isFavoritesPage()) {
         scanVideos();
       }
     };
@@ -1582,7 +1618,7 @@
       subtree: true,
     });
 
-    // startObserver 本身已经由 bootstrap 延迟启动，这里不要再叠加一轮延迟
+    // 先处理 DOMContentLoaded 时已经存在的卡片，其余内容由 observer 补扫。
     runDomScan();
     repairFavoritesSidebar();
 
@@ -1615,9 +1651,8 @@
         enforcePlayerChromeVisibility();
         stopFastRateBootstrap();
         startFastRateBootstrap();
-        // 路由变化后重新扫描，收藏夹页面给更长时间等 B站渲染完成
-        setTimeout(() => {
-          if (isBiliHeaderMountPending()) return;
+        // 播放页路由切换同样等待顶部栏完成挂载，避免 SPA 导航后出现空栏。
+        setTimeout(() => runWhenBiliHeaderReady(() => {
           syncTopBarVisibilityClass();
           ensureChromeVisibilityObserver();
           enforcePlayerChromeVisibility();
@@ -1625,7 +1660,7 @@
           injectDetailButton();
           scanVideos();
           repairFavoritesSidebar();
-        }, scanDelay);
+        }), scanDelay);
       }
     };
 
@@ -1642,9 +1677,13 @@
     startFastRateBootstrap();
     ensureChromeVisibilityObserver();
     enforcePlayerChromeVisibility();
-    // 延迟 DOM 扫描/注入，避免在 B 站 SPA 初始挂载期间干扰框架
-    // 收藏夹页面给更长时间（3s），避免干扰 B站空间页面渲染
-    setTimeout(() => runWhenBiliHeaderReady(startObserver), getScanDelay());
+    const scanDelay = getScanDelay();
+    if (scanDelay > 0) {
+      // 播放页保留稳定窗口，避免在 B 站 header 二次挂载前修改 DOM。
+      setTimeout(() => runWhenBiliHeaderReady(startObserver), scanDelay);
+    } else {
+      startObserver();
+    }
   }
 
   if (document.readyState === "loading") {

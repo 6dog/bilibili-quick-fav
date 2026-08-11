@@ -1,11 +1,11 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.58-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.62-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
 
-- 视频封面悬停显示书签按钮，一键收藏到指定收藏夹
+- 视频封面载入时提前准备书签按钮，鼠标悬停立即显示并可一键收藏
 - 播放页默认 1.5 倍速，并尊重手动切换
 
 ## 安装
@@ -13,6 +13,15 @@
 1. 安装用户脚本管理器：[Tampermonkey](https://www.tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/)
 2. 打开 [`bilibili-quick-fav.user.js`](./bilibili-quick-fav.user.js)
 3. 点击 `Raw` 安装
+
+### 自动更新
+
+v1.62 起脚本内置 GitHub Raw 更新地址。Tampermonkey 会按扩展设置中的
+检查周期读取远程 `@version`；发现更高版本后自动下载更新。安装一次 v1.62
+后，后续版本不再需要重复打开 Raw 页面。
+
+自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
+你的浏览器。
 
 ## 功能
 
