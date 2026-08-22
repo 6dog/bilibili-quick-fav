@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.62
+// @version      1.63
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -18,23 +18,17 @@
   "use strict";
 
   // ===== 常量 =====
-  const PROCESSED_ATTR = "data-qfav-processed";
-  const CARD_HOVER_ATTR = "data-qfav-card";
   const FAV_FOLDER_KEY = "qfav_folder_id";
   const FAV_FOLDER_NAME_KEY = "qfav_folder_name";
   const DEFAULT_PLAYBACK_RATE = 1.5;
-  // 诊断中：顶部栏保活 + 播放器 chrome observer 先关掉，排查 header 空白 bug
-  const KEEP_TOP_BAR_VISIBLE = false;
-  // 诊断开关：true 启用默认倍速功能；false 则只保留一键收藏（v1.0.0 行为）
   const ENABLE_DEFAULT_RATE = true;
-  // 卡片本身已有 header 禁区保护，可在 DOM 就绪后立即启动扫描。
+  const OVERLAY_HOST_ID = "qfav-overlay-host";
   const PLAYBACK_BOOTSTRAP_DELAY_MS = 1500;
   const DOM_BOOTSTRAP_DELAY_MS = 0;
   const FAVORITES_BOOTSTRAP_DELAY_MS = 0;
   const DOM_SCAN_THROTTLE_MS = 50;
   const FAVORITES_SCAN_THROTTLE_MS = 80;
   const FAVORITES_EXTRA_SCAN_DELAYS = [2000, 5000, 8000];
-  const FAVORITES_SIDEBAR_REPAIR_DELAYS = [3500, 7000, 11000];
   const HEADER_MOUNT_RETRY_MS = 100;
 
   // ===== 收藏状态缓存 =====
@@ -45,6 +39,16 @@
   let uidPromise = null;
   let folderPickerPromise = null;
   let coverStateObserver = null;
+  let coverResizeObserver = null;
+  let overlayHost = null;
+  let overlayRoot = null;
+  let overlayLayer = null;
+  let detailRecord = null;
+  let activeCoverRecord = null;
+  let layoutFrame = 0;
+  let routeGeneration = 0;
+  const coverRecords = new Map();
+  const buttonRecords = new Map();
 
   // SPA 导航保护期截止时间戳（毫秒）；保护期内 MutationObserver 不执行扫描
   let navGuardUntil = 0;
@@ -100,14 +104,6 @@
     );
     if (data.code !== 0) throw new Error("获取收藏夹失败");
     return data.data.list || [];
-  }
-
-  async function getCreatedFavFolders(upMid) {
-    const data = await apiFetch(
-      `https://api.bilibili.com/x/v3/fav/folder/created/list?up_mid=${upMid}&pn=1&ps=50`,
-    );
-    if (data.code !== 0) return [];
-    return data.data?.list || [];
   }
 
   async function bv2aid(bvid) {
@@ -396,10 +392,10 @@
 
   function syncFavVisualState(aid, faved) {
     favCache.set(aid, faved);
-    document
+    overlayRoot
       .querySelectorAll(`.qfav-btn[data-qfav-aid="${aid}"]`)
       .forEach((button) => setButtonVisualState(button, faved));
-    document
+    overlayRoot
       .querySelectorAll(`.qfav-detail-btn[data-qfav-aid="${aid}"]`)
       .forEach((button) => setButtonVisualState(button, faved, true, 28));
   }
@@ -415,7 +411,7 @@
     );
   }
 
-  // ===== 注入 CSS =====
+  // ===== 隔离浮层 =====
   const COVER_CARD_SELECTORS = [
     ".bili-video-card",
     ".video-card",
@@ -441,13 +437,41 @@
   const MEDIA_HINT_SELECTOR = "img, picture, video, canvas";
   const COVER_CARD_SELECTOR = COVER_CARD_SELECTORS.join(",");
 
-  function injectStyles() {
+  function ensureOverlayRoot() {
+    if (overlayRoot?.isConnected) return overlayRoot;
+
+    overlayHost = document.createElement("div");
+    overlayHost.id = OVERLAY_HOST_ID;
+    Object.assign(overlayHost.style, {
+      all: "initial",
+      position: "fixed",
+      inset: "0",
+      width: "0",
+      height: "0",
+      zIndex: "2147483000",
+      pointerEvents: "none",
+    });
+    document.body.appendChild(overlayHost);
+
+    overlayRoot = overlayHost.attachShadow({ mode: "open" });
     const style = document.createElement("style");
     style.textContent = `
+      :host {
+        all: initial;
+      }
+      .qfav-layer {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        pointer-events: none;
+        contain: layout style;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
       .qfav-btn {
-        position: absolute;
-        top: 8px;
-        left: 8px;
+        position: fixed;
+        top: 0;
+        left: 0;
         width: 32px;
         height: 32px;
         border-radius: 50%;
@@ -487,23 +511,15 @@
         opacity: 0 !important;
         pointer-events: none;
       }
-      /* 按钮已随卡片提前注入，hover 时只切换显示，不再等待扫描或接口。 */
-      [data-qfav-card="1"]:hover > .qfav-btn:not(.qfav-state-pending) {
+      .qfav-btn.qfav-visible:not(.qfav-state-pending) {
         opacity: 1;
         pointer-events: auto;
       }
-      /* 详情页按钮 —— 视频下方工具栏 */
-      .qfav-detail-wrap {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px;
-        height: 28px;
-        margin-left: 12px;
-        flex: 0 0 auto;
-      }
       .qfav-detail-btn {
-        display: inline-flex;
+        position: fixed;
+        top: 0;
+        left: 0;
+        display: flex;
         align-items: center;
         justify-content: center;
         width: 28px !important;
@@ -518,8 +534,8 @@
         transition: transform 0.15s;
         margin: 0 !important;
         line-height: 28px !important;
-        vertical-align: baseline;
-        flex: 0 0 28px;
+        pointer-events: auto;
+        z-index: 1;
         -webkit-tap-highlight-color: transparent;
       }
       .qfav-detail-btn:focus,
@@ -540,30 +556,11 @@
         visibility: hidden;
         pointer-events: none;
       }
-      html.qfav-keep-top-bar .bpx-player-control-top,
-      html.qfav-keep-top-bar .bpx-player-top-wrap,
-      html.qfav-keep-top-bar .bilibili-player-video-top,
-      html.qfav-keep-top-bar .squirtle-video-top {
-        visibility: visible !important;
-        opacity: 1 !important;
-        pointer-events: auto !important;
-      }
-      html.qfav-keep-top-bar #bili-header-container,
-      html.qfav-keep-top-bar #biliMainHeader,
-      html.qfav-keep-top-bar .bili-header,
-      html.qfav-keep-top-bar .bili-header__bar,
-      html.qfav-keep-top-bar .international-header,
-      html.qfav-keep-top-bar .z_top_nav,
-      html.qfav-keep-top-bar .z_top_nav_wrap,
-      html.qfav-keep-top-bar .mini-header,
-      html.qfav-keep-top-bar .fixed-header {
-        visibility: visible !important;
-        opacity: 1 !important;
-        transform: none !important;
-        pointer-events: auto !important;
-      }
     `;
-    document.head.appendChild(style);
+    overlayLayer = document.createElement("div");
+    overlayLayer.className = "qfav-layer";
+    overlayRoot.append(style, overlayLayer);
+    return overlayRoot;
   }
 
   // ===== 收藏切换逻辑 =====
@@ -668,9 +665,9 @@
 
   // ===== 封面按钮注入 =====
 
-  function prefetchCoverStateWhenVisible(btn, loadState) {
+  function prefetchCoverStateWhenVisible(record) {
     if (!("IntersectionObserver" in window)) {
-      setTimeout(loadState, 0);
+      setTimeout(record.loadState, 0);
       return;
     }
 
@@ -689,28 +686,33 @@
       );
     }
 
-    coverStateLoaders.set(btn, loadState);
-    coverStateObserver.observe(btn);
+    coverStateLoaders.set(record.target, record.loadState);
+    coverStateObserver.observe(record.target);
   }
 
-  function injectCoverButton(cardEl, bvid) {
-    if (cardEl.querySelector(".qfav-btn")) return;
-    cardEl.setAttribute(CARD_HOVER_ATTR, "1");
-
-    // 确保卡片有 position relative
-    const pos = getComputedStyle(cardEl).position;
-    if (pos === "static") cardEl.style.position = "relative";
-
+  function createCoverRecord(cardEl, bvid) {
+    ensureOverlayRoot();
+    const generation = routeGeneration;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "qfav-btn";
     btn.title = "快捷收藏";
+    btn.dataset.qfavBvid = bvid;
+    btn.qfavTarget = cardEl;
     if (isFavoritesCollectionPage()) {
       setButtonVisualState(btn, true);
+      btn.dataset.qfavStateReady = "1";
     } else {
       setButtonVisualState(btn, false);
     }
 
+    const record = {
+      target: cardEl,
+      bvid,
+      button: btn,
+      generation,
+      loadState: null,
+    };
     let initialStatePromise = null;
     const loadInitialCoverState = async () => {
       if (isFavoritesCollectionPage() || btn.dataset.qfavStateReady === "1") return;
@@ -719,13 +721,26 @@
         initialStatePromise = (async () => {
           try {
             const aid = await getAid(bvid);
-            if (!aid || !btn.isConnected) return;
+            if (
+              !aid ||
+              generation !== routeGeneration ||
+              !btn.isConnected ||
+              !cardEl.isConnected
+            ) {
+              return;
+            }
             btn.dataset.qfavAid = String(aid);
 
             if (!favCache.has(aid)) {
               const seq = getFavStateSeq(aid);
               const anyFaved = await checkAnyFavoured(aid);
-              if (getFavStateSeq(aid) !== seq || !btn.isConnected) return;
+              if (
+                generation !== routeGeneration ||
+                getFavStateSeq(aid) !== seq ||
+                !btn.isConnected
+              ) {
+                return;
+              }
               syncFavVisualState(aid, anyFaved === true);
               btn.dataset.qfavStateReady = "1";
               return;
@@ -744,6 +759,7 @@
 
       return initialStatePromise;
     };
+    record.loadState = loadInitialCoverState;
 
     ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
       (eventName) => {
@@ -759,8 +775,9 @@
 
         try {
           await loadInitialCoverState();
+          if (generation !== routeGeneration) return;
           const aid = await getAid(bvid);
-          if (!aid) return;
+          if (!aid || generation !== routeGeneration) return;
           btn.dataset.qfavAid = String(aid);
 
           bumpFavStateSeq(aid);
@@ -775,17 +792,113 @@
       true,
     );
 
-    cardEl.appendChild(btn);
+    overlayLayer.appendChild(btn);
+    coverRecords.set(cardEl, record);
+    buttonRecords.set(btn, record);
+
+    if (coverResizeObserver) coverResizeObserver.observe(cardEl);
+    scheduleOverlayLayout();
 
     if (isFavoritesCollectionPage()) {
-      return;
+      return record;
     }
 
-    prefetchCoverStateWhenVisible(btn, loadInitialCoverState);
-    cardEl.addEventListener("pointerenter", loadInitialCoverState, {
-      passive: true,
-    });
-    cardEl.addEventListener("focusin", loadInitialCoverState);
+    prefetchCoverStateWhenVisible(record);
+    return record;
+  }
+
+  function removeCoverRecord(record) {
+    if (!record) return;
+    if (activeCoverRecord === record) activeCoverRecord = null;
+    coverStateObserver?.unobserve(record.target);
+    coverResizeObserver?.unobserve(record.target);
+    coverStateLoaders.delete(record.target);
+    coverRecords.delete(record.target);
+    buttonRecords.delete(record.button);
+    record.button.remove();
+  }
+
+  function setActiveCoverRecord(record) {
+    if (record && (!record.target.isConnected || record.generation !== routeGeneration)) {
+      record = null;
+    }
+    if (activeCoverRecord === record) return;
+    activeCoverRecord?.button.classList.remove("qfav-visible");
+    activeCoverRecord = record;
+    if (record) {
+      record.button.classList.add("qfav-visible");
+      void record.loadState();
+      scheduleOverlayLayout();
+    }
+  }
+
+  function findCoverRecordFromEvent(event) {
+    for (const item of event.composedPath?.() || []) {
+      if (buttonRecords.has(item)) return buttonRecords.get(item);
+    }
+
+    let node = event.target instanceof Element ? event.target : null;
+    while (node) {
+      const record = coverRecords.get(node);
+      if (record) return record;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function positionCoverRecord(record) {
+    const rect = record.target.getBoundingClientRect();
+    const visible =
+      record.target.isConnected &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.bottom > 0 &&
+      rect.right > 0 &&
+      rect.top < innerHeight &&
+      rect.left < innerWidth;
+    record.button.style.visibility = visible ? "visible" : "hidden";
+    if (!visible) return;
+    record.button.style.left = `${Math.round(rect.left + 8)}px`;
+    record.button.style.top = `${Math.round(rect.top + 8)}px`;
+  }
+
+  function positionDetailRecord() {
+    if (!detailRecord) return;
+    const { anchor, button, generation } = detailRecord;
+    const rect = anchor.getBoundingClientRect();
+    const visible =
+      generation === routeGeneration &&
+      anchor.isConnected &&
+      rect.width > 0 &&
+      rect.height > 0 &&
+      rect.bottom > 0 &&
+      rect.top < innerHeight;
+    button.style.visibility = visible ? "visible" : "hidden";
+    if (!visible) return;
+    const x = Math.min(innerWidth - 40, Math.max(8, Math.round(rect.right + 12)));
+    const y = Math.min(
+      innerHeight - 36,
+      Math.max(8, Math.round(rect.top + (rect.height - 28) / 2)),
+    );
+    button.style.left = `${x}px`;
+    button.style.top = `${y}px`;
+  }
+
+  function updateOverlayLayout() {
+    layoutFrame = 0;
+    coverRecords.forEach(positionCoverRecord);
+    positionDetailRecord();
+  }
+
+  function scheduleOverlayLayout() {
+    if (layoutFrame) return;
+    layoutFrame = requestAnimationFrame(updateOverlayLayout);
+  }
+
+  function removeAllOverlayButtons() {
+    [...coverRecords.values()].forEach(removeCoverRecord);
+    removeDetailButton();
+    setActiveCoverRecord(null);
   }
 
   // ===== 扫描并注入封面按钮 =====
@@ -891,28 +1004,30 @@
   }
 
   function scanVideoCards() {
+    const discovered = new Map();
     collectVideoCardTargets().forEach((card) => {
-      if (isInsideHeader(card)) return;
-
       const bvid = extractBvid(card);
-      if (!bvid) return; // 骨架屏阶段无 BV ID，不打标记，等内容填入后再处理
-
-      if (card.hasAttribute(PROCESSED_ATTR)) {
-        if (card.dataset.qfavBvid === bvid) return;
-        card.querySelectorAll(":scope > .qfav-btn").forEach((btn) => btn.remove());
-        card.removeAttribute(PROCESSED_ATTR);
-        card.removeAttribute(CARD_HOVER_ATTR);
-      }
-
-      card.dataset.qfavBvid = bvid;
-      card.setAttribute(PROCESSED_ATTR, "1");
-      injectCoverButton(card, bvid);
+      if (bvid) discovered.set(card, bvid);
     });
+
+    [...coverRecords.values()].forEach((record) => {
+      if (
+        !discovered.has(record.target) ||
+        discovered.get(record.target) !== record.bvid ||
+        record.generation !== routeGeneration ||
+        !record.button.isConnected
+      ) {
+        removeCoverRecord(record);
+      }
+    });
+
+    discovered.forEach((bvid, card) => {
+      if (!coverRecords.has(card)) createCoverRecord(card, bvid);
+    });
+    scheduleOverlayLayout();
   }
 
   // ===== 详情页按钮 =====
-
-  let detailBtnInjected = false;
 
   function findDetailToolbar() {
     return (
@@ -932,16 +1047,17 @@
     return toolbar.querySelector(".video-toolbar-left") || toolbar;
   }
 
-  function removeDetailButton(btn) {
-    const wrap = btn.closest(".qfav-detail-wrap");
-    (wrap || btn).remove();
+  function removeDetailButton() {
+    if (!detailRecord) return;
+    buttonRecords.delete(detailRecord.button);
+    detailRecord.button.remove();
+    detailRecord = null;
   }
 
   function injectDetailButton() {
     const match = location.pathname.match(/\/video\/(BV[\w]+)/);
     if (!match) {
-      detailBtnInjected = false;
-      document.querySelectorAll(".qfav-detail-btn").forEach(removeDetailButton);
+      removeDetailButton();
       return;
     }
 
@@ -949,21 +1065,27 @@
     const mount = findDetailButtonMount();
     if (!mount) return;
 
-    const existingBtn = document.querySelector(".qfav-detail-btn");
-    if (existingBtn && existingBtn.isConnected) {
-      if (existingBtn.dataset.qfavBvid === bvid && mount.contains(existingBtn)) {
-        return;
-      }
-      removeDetailButton(existingBtn);
+    if (
+      detailRecord?.button.isConnected &&
+      detailRecord.bvid === bvid &&
+      detailRecord.anchor === mount &&
+      detailRecord.generation === routeGeneration
+    ) {
+      scheduleOverlayLayout();
+      return;
     }
+    removeDetailButton();
+    ensureOverlayRoot();
 
     const ICON_SIZE = 28;
+    const generation = routeGeneration;
 
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "qfav-detail-btn";
     btn.title = "快捷收藏";
     btn.dataset.qfavBvid = bvid;
+    btn.qfavTarget = mount;
     const nativeFavState = getNativeFavoriteState();
     // 原生收藏按钮会先以未激活状态挂载，再异步补上 `on`。
     // 这里只用它提供即时视觉反馈，最终状态仍交给接口确认，避免把过早的
@@ -978,12 +1100,18 @@
         initialStatePromise = (async () => {
           try {
             const aid = await getAid(bvid);
-            if (!aid || !btn.isConnected) return;
+            if (!aid || generation !== routeGeneration || !btn.isConnected) return;
             btn.dataset.qfavAid = String(aid);
 
             const seq = getFavStateSeq(aid);
             const anyFaved = await checkAnyFavoured(aid);
-            if (getFavStateSeq(aid) !== seq || !btn.isConnected) return;
+            if (
+              generation !== routeGeneration ||
+              getFavStateSeq(aid) !== seq ||
+              !btn.isConnected
+            ) {
+              return;
+            }
             const finalState =
               anyFaved !== null
                 ? anyFaved
@@ -1017,8 +1145,9 @@
 
         try {
           await loadInitialDetailState();
+          if (generation !== routeGeneration) return;
           const aid = await getAid(bvid);
-          if (!aid) return;
+          if (!aid || generation !== routeGeneration) return;
           btn.dataset.qfavAid = String(aid);
 
           bumpFavStateSeq(aid);
@@ -1033,18 +1162,14 @@
       true,
     );
 
-    const wrap = document.createElement("div");
-    wrap.className = "qfav-detail-wrap";
-    wrap.appendChild(btn);
-
-    mount.appendChild(wrap);
-
-    detailBtnInjected = true;
+    overlayLayer.appendChild(btn);
+    detailRecord = { anchor: mount, bvid, button: btn, generation };
     void loadInitialDetailState();
     btn.addEventListener("pointerenter", loadInitialDetailState, {
       passive: true,
     });
     btn.addEventListener("focusin", loadInitialDetailState);
+    scheduleOverlayLayout();
   }
 
   // ===== 默认播放倍速 =====
@@ -1088,7 +1213,6 @@
   const videoRateStates = new WeakMap();
   let fastApplyFrame = 0;
   let fastApplyDeadline = 0;
-  let chromeVisibilityObserver = null;
   let navigationWatchStarted = false;
 
   let lastSpeedClickAt = 0;
@@ -1099,72 +1223,18 @@
     );
   }
 
-  function syncTopBarVisibilityClass() {
-    if (!KEEP_TOP_BAR_VISIBLE) return;
-    document.documentElement.classList.toggle(
-      "qfav-keep-top-bar",
-      isSupportedPlaybackPage(),
-    );
-  }
-
-  function forceVisibleStyle(el) {
-    if (!el || !el.style) return;
-    el.style.setProperty("visibility", "visible", "important");
-    el.style.setProperty("opacity", "1", "important");
-    el.style.setProperty("pointer-events", "auto", "important");
-    if (getComputedStyle(el).display === "none") {
-      el.style.setProperty("display", "flex", "important");
-    }
-  }
-
-  function enforcePlayerChromeVisibility() {
-    if (!KEEP_TOP_BAR_VISIBLE || !isSupportedPlaybackPage()) return;
-
-    const selectors = [
-      ".bpx-player-control-top",
-      ".bpx-player-top-wrap",
-      ".bilibili-player-video-top",
-      ".squirtle-video-top",
-      ".bpx-player-control-wrap",
-      ".bilibili-player-video-control-wrap",
-      ".squirtle-controller-wrap",
-    ];
-
-    selectors.forEach((selector) => {
-      document.querySelectorAll(selector).forEach(forceVisibleStyle);
-    });
-  }
-
-  function ensureChromeVisibilityObserver() {
-    if (!KEEP_TOP_BAR_VISIBLE) return;
-
-    const root = document.documentElement;
-    if (!root) return;
-
-    if (!isSupportedPlaybackPage()) {
-      if (chromeVisibilityObserver) {
-        chromeVisibilityObserver.disconnect();
-        chromeVisibilityObserver = null;
-      }
-      return;
-    }
-
-    if (chromeVisibilityObserver) return;
-
-    chromeVisibilityObserver = new MutationObserver(() => {
-      enforcePlayerChromeVisibility();
-    });
-
-    chromeVisibilityObserver.observe(root, {
-      attributes: true,
-      childList: true,
-      subtree: true,
-      attributeFilter: ["class", "style", "hidden"],
-    });
+  function getSemanticRouteKey() {
+    const url = new URL(location.href);
+    const relevantParams = ["p", "fid", "ftype", "bvid", "oid", "ep_id"];
+    const query = relevantParams
+      .filter((key) => url.searchParams.has(key))
+      .map((key) => `${key}=${url.searchParams.get(key)}`)
+      .join("&");
+    return `${url.hostname}${url.pathname}${query ? `?${query}` : ""}`;
   }
 
   function getPlaybackPageKey() {
-    return `${location.pathname}${location.search}`;
+    return getSemanticRouteKey();
   }
 
   function nearlyEqualRate(a, b) {
@@ -1446,137 +1516,6 @@
     return /space\.bilibili\.com\/\d+\/favlist/.test(location.href);
   }
 
-  function getFavoritesSpaceMid() {
-    const match = location.pathname.match(/\/(\d+)\/favlist/);
-    return match ? match[1] : null;
-  }
-
-  function getCurrentFavoriteFolderId() {
-    return new URLSearchParams(location.search).get("fid");
-  }
-
-  function makeFavoriteFolderUrl(upMid, folderId) {
-    return `https://space.bilibili.com/${upMid}/favlist?fid=${folderId}&ftype=create`;
-  }
-
-  function findCreatedFavoritesCollapse() {
-    return Array.from(
-      document.querySelectorAll(".fav-collapse, .vui_collapse_item"),
-    ).find((item) => {
-      const header =
-        item.querySelector(".vui_collapse_item_header") ||
-        item.firstElementChild ||
-        item;
-      return (header.textContent || "").includes("我创建的收藏夹");
-    });
-  }
-
-  function getCreatedFavoritesContainer(collapse) {
-    return (
-      collapse?.querySelector(".fav-collapse-wrap") ||
-      collapse?.querySelector(".vui_collapse_item_content") ||
-      null
-    );
-  }
-
-  function hasRenderedFavoriteFolder(folder) {
-    const folderTitle = String(folder.title || "").trim();
-    return Array.from(
-      document.querySelectorAll(".fav-sidebar-item, .vui_sidebar-item, a"),
-    ).some((item) => {
-      const titleText = (
-        item.querySelector(".vui_sidebar-item-title")?.textContent ||
-        item.textContent ||
-        ""
-      ).trim();
-      const href = item.href || "";
-      return (
-        href.includes(`fid=${folder.id}`) ||
-        titleText === folderTitle
-      );
-    });
-  }
-
-  function createFavoriteFolderSidebarItem(folder, upMid) {
-    const link = document.createElement("a");
-    link.className = "fav-sidebar-item qfav-repaired-folder";
-    link.href = makeFavoriteFolderUrl(upMid, folder.id);
-    link.title = folder.title || "收藏夹";
-    link.style.display = "block";
-    link.style.textDecoration = "none";
-
-    const row = document.createElement("div");
-    row.className = "vui_sidebar-item";
-    Object.assign(row.style, {
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      minHeight: "36px",
-      padding: "0 12px",
-      borderRadius: "6px",
-      color: "#18191c",
-      boxSizing: "border-box",
-    });
-
-    const title = document.createElement("div");
-    title.className = "vui_sidebar-item-title vui_ellipsis multi-mode";
-    title.textContent = folder.title || "收藏夹";
-    Object.assign(title.style, {
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      whiteSpace: "nowrap",
-    });
-
-    const count = document.createElement("span");
-    count.textContent = String(folder.media_count ?? "");
-    Object.assign(count.style, {
-      marginLeft: "8px",
-      color: "#9499a0",
-      fontSize: "12px",
-      flex: "0 0 auto",
-    });
-
-    row.append(title, count);
-    link.appendChild(row);
-    return link;
-  }
-
-  async function repairFavoritesSidebar() {
-    if (!isFavoritesPage()) return;
-
-    const upMid = getFavoritesSpaceMid();
-    if (!upMid) return;
-
-    const folders = (await getCreatedFavFolders(upMid)).filter(
-      (folder) => folder?.id && folder?.title,
-    );
-    if (folders.length === 0) return;
-
-    const collapse = findCreatedFavoritesCollapse();
-    const container = getCreatedFavoritesContainer(collapse);
-    if (!container) return;
-
-    const missingFolders = folders.filter((folder) => !hasRenderedFavoriteFolder(folder));
-    if (missingFolders.length > 0) {
-      const createButton = container.querySelector(".fav-collapse-create");
-      missingFolders.forEach((folder) => {
-        container.insertBefore(
-          createFavoriteFolderSidebarItem(folder, upMid),
-          createButton || null,
-        );
-      });
-    }
-
-    const titleText = document.querySelector(".favlist-info-detail__title-row");
-    const appearsOnBrokenDefault =
-      !getCurrentFavoriteFolderId() &&
-      titleText &&
-      (titleText.textContent || "").includes("未命名收藏夹");
-    if (appearsOnBrokenDefault) {
-      location.replace(makeFavoriteFolderUrl(upMid, folders[0].id));
-    }
-  }
-
   function getScanDelay() {
     if (isSupportedPlaybackPage()) return PLAYBACK_BOOTSTRAP_DELAY_MS;
     return isFavoritesPage() ? FAVORITES_BOOTSTRAP_DELAY_MS : DOM_BOOTSTRAP_DELAY_MS;
@@ -1584,10 +1523,8 @@
 
   function startObserver() {
     const runDomScan = () => {
-      // 视频页顶部栏由 B 站 SPA 异步挂载；完成前修改页面 DOM 会让 header
-      // 留下一个空壳。非播放页不受此限制，仍可立即扫描。
+      // 视频页仍等顶部栏完成初次挂载，但所有收藏控件只写入隔离浮层。
       if (isBiliHeaderMountPending()) return;
-      syncTopBarVisibilityClass();
       scanVideoCards();
       if (!isFavoritesPage()) {
         injectDetailButton();
@@ -1620,14 +1557,10 @@
 
     // 先处理 DOMContentLoaded 时已经存在的卡片，其余内容由 observer 补扫。
     runDomScan();
-    repairFavoritesSidebar();
 
     if (isFavoritesPage()) {
       FAVORITES_EXTRA_SCAN_DELAYS.forEach((delay) => {
         setTimeout(runDomScan, delay);
-      });
-      FAVORITES_SIDEBAR_REPAIR_DELAYS.forEach((delay) => {
-        setTimeout(repairFavoritesSidebar, delay);
       });
     }
   }
@@ -1638,28 +1571,23 @@
     if (navigationWatchStarted) return;
     navigationWatchStarted = true;
 
-    let lastUrl = location.href;
+    let lastRouteKey = getSemanticRouteKey();
     const check = () => {
-      if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        detailBtnInjected = false;
+      const nextRouteKey = getSemanticRouteKey();
+      if (nextRouteKey !== lastRouteKey) {
+        lastRouteKey = nextRouteKey;
+        routeGeneration += 1;
         favCache.clear();
+        removeAllOverlayButtons();
         const scanDelay = getScanDelay();
         navGuardUntil = Date.now() + scanDelay; // 保护期：屏蔽 Observer 在挂载窗口内的扫描
-        syncTopBarVisibilityClass();
-        ensureChromeVisibilityObserver();
-        enforcePlayerChromeVisibility();
         stopFastRateBootstrap();
         startFastRateBootstrap();
-        // 播放页路由切换同样等待顶部栏完成挂载，避免 SPA 导航后出现空栏。
+        // 只有视频/分P/收藏夹等语义路由变化才重置；vd_source 等参数被忽略。
         setTimeout(() => runWhenBiliHeaderReady(() => {
-          syncTopBarVisibilityClass();
-          ensureChromeVisibilityObserver();
-          enforcePlayerChromeVisibility();
           scanVideoCards();
           injectDetailButton();
           scanVideos();
-          repairFavoritesSidebar();
         }), scanDelay);
       }
     };
@@ -1671,12 +1599,34 @@
 
   // ===== 启动 =====
 
+  function bindOverlayLifecycle() {
+    ensureOverlayRoot();
+    if ("ResizeObserver" in window) {
+      coverResizeObserver = new ResizeObserver(scheduleOverlayLayout);
+    }
+
+    document.addEventListener(
+      "pointermove",
+      (event) => setActiveCoverRecord(findCoverRecordFromEvent(event)),
+      { capture: true, passive: true },
+    );
+    document.addEventListener(
+      "focusin",
+      (event) => setActiveCoverRecord(findCoverRecordFromEvent(event)),
+      true,
+    );
+    window.addEventListener("blur", () => setActiveCoverRecord(null));
+    window.addEventListener("scroll", scheduleOverlayLayout, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("resize", scheduleOverlayLayout, { passive: true });
+  }
+
   function bootstrapDomFeatures() {
-    injectStyles();
+    bindOverlayLifecycle();
     watchNavigation();
     startFastRateBootstrap();
-    ensureChromeVisibilityObserver();
-    enforcePlayerChromeVisibility();
     const scanDelay = getScanDelay();
     if (scanDelay > 0) {
       // 播放页保留稳定窗口，避免在 B 站 header 二次挂载前修改 DOM。
