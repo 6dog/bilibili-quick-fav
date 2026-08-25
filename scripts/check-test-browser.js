@@ -10,6 +10,7 @@ const injectLocalScript = process.argv.includes("--inject-local-script");
 const toggleDetailFavorite = process.argv.includes("--toggle-detail-favorite");
 const probeManualRate = process.argv.includes("--probe-manual-rate");
 const probeSemanticRoute = process.argv.includes("--probe-semantic-route");
+const probeFullscreen = process.argv.includes("--probe-fullscreen");
 const repoRoot = path.resolve(__dirname, "..");
 const userscriptPath = path.join(repoRoot, "bilibili-quick-fav.user.js");
 const testUrl = process.env.QFAV_TEST_URL || "https://t.bilibili.com/";
@@ -278,6 +279,85 @@ async function main() {
   }
 
   let manualRateTest = { tested: false };
+
+  let fullscreenTest = { tested: false };
+  if (probeFullscreen) {
+    const toggleWebFullscreen = () =>
+      cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `(() => {
+          const control = document.querySelector(".bpx-player-ctrl-web");
+          if (!control) return false;
+          control.click();
+          return true;
+        })()`,
+      });
+    const readFullscreenState = async () => {
+      const state = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `(() => {
+          const host = document.querySelector("#qfav-overlay-host");
+          const layer = host?.shadowRoot?.querySelector(".qfav-layer");
+          const player =
+            document.querySelector("#bilibili-player") ||
+            document.querySelector(".bpx-player-container");
+          const rect = player?.getBoundingClientRect();
+          return {
+            overlayVisibility: layer ? getComputedStyle(layer).visibility : null,
+            fullscreenElement: Boolean(document.fullscreenElement || document.webkitFullscreenElement),
+            bodyClass: document.body.className,
+            playerClass: player?.className || null,
+            playerRect: rect ? {
+              left: Math.round(rect.left), top: Math.round(rect.top),
+              width: Math.round(rect.width), height: Math.round(rect.height),
+            } : null,
+            viewport: { width: innerWidth, height: innerHeight },
+          };
+        })()`,
+      });
+      return state.result?.result?.value || null;
+    };
+
+    const entered = await toggleWebFullscreen();
+    if (entered.result?.result?.value) {
+      await wait(700);
+      const during = await readFullscreenState();
+      await toggleWebFullscreen();
+      await wait(700);
+      const nativeControl = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `(() => {
+          const control = document.querySelector(".bpx-player-ctrl-full");
+          if (!control) return null;
+          const rect = control.getBoundingClientRect();
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        })()`,
+      });
+      const nativePoint = nativeControl.result?.result?.value || null;
+      let nativeDuring = null;
+      let nativeAfter = null;
+      if (nativePoint) {
+        await clickAt(cdp, nativePoint);
+        await wait(700);
+        nativeDuring = await readFullscreenState();
+        await cdp.send("Runtime.evaluate", {
+          expression: `document.exitFullscreen?.() || document.webkitExitFullscreen?.()`,
+        });
+        await wait(700);
+        nativeAfter = await readFullscreenState();
+      }
+      fullscreenTest = {
+        tested: true,
+        during,
+        after: await readFullscreenState(),
+        nativeDuring,
+        nativeAfter,
+      };
+    } else {
+      fullscreenTest = { tested: false, error: "web fullscreen control missing" };
+    }
+  }
+
   if (probeManualRate) {
     const getRateControl = () =>
       cdp.send("Runtime.evaluate", {
@@ -671,6 +751,16 @@ async function main() {
           pageHeader: inspectVisibility(pageHeader),
           playerTop: inspectVisibility(playerTop),
           playerTopHover: ${JSON.stringify(playerTopHover)},
+          fullscreenTest: ${JSON.stringify(fullscreenTest)},
+          screenControls: [...document.querySelectorAll(
+            '[class*="fullscreen"],[class*="webscreen"],[class*="web-full"],[data-text*="全屏"],[aria-label*="全屏"]'
+          )].slice(0, 30).map((element) => ({
+            tag: element.tagName,
+            className: typeof element.className === "string" ? element.className : null,
+            title: element.getAttribute("title"),
+            ariaLabel: element.getAttribute("aria-label"),
+            dataText: element.getAttribute("data-text"),
+          })),
           playbackRate: mainVideo?.playbackRate || null,
           manualRateTest: ${JSON.stringify(manualRateTest)},
           detailQuickFav: detailButton

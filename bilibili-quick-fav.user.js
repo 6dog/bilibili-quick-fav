@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.65
+// @version      1.66
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -884,8 +884,34 @@
     button.style.top = `${y}px`;
   }
 
+  function isPlayerFullscreenMode() {
+    if (document.fullscreenElement || document.webkitFullscreenElement) {
+      return true;
+    }
+
+    const player =
+      document.querySelector("#bilibili-player") ||
+      document.querySelector(".bpx-player-container") ||
+      document.querySelector(".bilibili-player-video");
+    if (!player) return false;
+
+    const rect = player.getBoundingClientRect();
+    return (
+      rect.left <= innerWidth * 0.05 &&
+      rect.top <= innerHeight * 0.05 &&
+      rect.width >= innerWidth * 0.9 &&
+      rect.height >= innerHeight * 0.85
+    );
+  }
+
   function updateOverlayLayout() {
     layoutFrame = 0;
+    const hideForFullscreen = isPlayerFullscreenMode();
+    overlayLayer.style.visibility = hideForFullscreen ? "hidden" : "visible";
+    if (hideForFullscreen) {
+      setActiveCoverRecord(null);
+      return;
+    }
     coverRecords.forEach(positionCoverRecord);
     positionDetailRecord();
   }
@@ -1004,14 +1030,6 @@
   }
 
   function scanVideoCards() {
-    // 播放页只保留播放器下方的详情快捷收藏按钮。右侧推荐、合集等封面
-    // 不属于卡片页，避免在这些位置重复显示悬停收藏按钮。
-    if (isSupportedPlaybackPage()) {
-      [...coverRecords.values()].forEach(removeCoverRecord);
-      setActiveCoverRecord(null);
-      return;
-    }
-
     const discovered = new Map();
     collectVideoCardTargets().forEach((card) => {
       const bvid = extractBvid(card);
@@ -1629,6 +1647,8 @@
       passive: true,
     });
     window.addEventListener("resize", scheduleOverlayLayout, { passive: true });
+    document.addEventListener("fullscreenchange", scheduleOverlayLayout);
+    document.addEventListener("webkitfullscreenchange", scheduleOverlayLayout);
   }
 
   function bootstrapDomFeatures() {

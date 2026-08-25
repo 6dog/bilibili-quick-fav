@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.65-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.66-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -26,6 +26,9 @@ v1.63 将收藏按钮迁移到独立 Shadow DOM 浮层，不再向 B 站管理�
 v1.65 播放页面只保留播放器下方操作栏旁的详情快捷收藏按钮，不再给右侧推荐、
 合集等封面重复显示悬停收藏按钮。
 
+v1.66 恢复播放页右侧推荐、合集封面的悬停收藏按钮；进入网页全屏或系统全屏时
+自动隐藏整个快捷收藏浮层，退出全屏后恢复，避免遮挡播放器控制图标。
+
 自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
 你的浏览器。
 
@@ -37,7 +40,7 @@ v1.65 播放页面只保留播放器下方操作栏旁的详情快捷收藏按�
 - 点击收藏到你预先选择的快捷收藏夹
 - 再点一次即可取消收藏
 - 视频详情页工具栏旁也会显示同样的快捷收藏按钮
-- 播放页右侧推荐、合集等封面不重复显示快捷收藏按钮
+- 播放页右侧推荐、合集封面仍支持悬停收藏，全屏播放时自动隐藏
 
 ### 默认倍速
 
