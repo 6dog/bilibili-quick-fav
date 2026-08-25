@@ -302,8 +302,16 @@ async function main() {
             document.querySelector("#bilibili-player") ||
             document.querySelector(".bpx-player-container");
           const rect = player?.getBoundingClientRect();
+          const nativeSideNav = document.querySelector(".fixed-sidenav-storage");
           return {
             overlayVisibility: layer ? getComputedStyle(layer).visibility : null,
+            overlayFullscreenState: host?.dataset.qfavPlayerFullscreen || null,
+            nativeSideNavDisplay: nativeSideNav
+              ? getComputedStyle(nativeSideNav).display
+              : null,
+            nativeSideNavVisibility: nativeSideNav
+              ? getComputedStyle(nativeSideNav).visibility
+              : null,
             fullscreenElement: Boolean(document.fullscreenElement || document.webkitFullscreenElement),
             bodyClass: document.body.className,
             playerClass: player?.className || null,

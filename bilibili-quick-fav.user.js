@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.66
+// @version      1.67
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -23,6 +23,7 @@
   const DEFAULT_PLAYBACK_RATE = 1.5;
   const ENABLE_DEFAULT_RATE = true;
   const OVERLAY_HOST_ID = "qfav-overlay-host";
+  const FULLSCREEN_FIX_STYLE_ID = "qfav-fullscreen-native-ui-fix";
   const PLAYBACK_BOOTSTRAP_DELAY_MS = 1500;
   const DOM_BOOTSTRAP_DELAY_MS = 0;
   const FAVORITES_BOOTSTRAP_DELAY_MS = 0;
@@ -452,6 +453,20 @@
       pointerEvents: "none",
     });
     document.body.appendChild(overlayHost);
+
+    if (!document.getElementById(FULLSCREEN_FIX_STYLE_ID)) {
+      const fullscreenFixStyle = document.createElement("style");
+      fullscreenFixStyle.id = FULLSCREEN_FIX_STYLE_ID;
+      fullscreenFixStyle.textContent = `
+        :root:has(#${OVERLAY_HOST_ID}[data-qfav-player-fullscreen="1"])
+          .fixed-sidenav-storage {
+          display: none !important;
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
+      `;
+      document.documentElement.appendChild(fullscreenFixStyle);
+    }
 
     overlayRoot = overlayHost.attachShadow({ mode: "open" });
     const style = document.createElement("style");
@@ -907,6 +922,7 @@
   function updateOverlayLayout() {
     layoutFrame = 0;
     const hideForFullscreen = isPlayerFullscreenMode();
+    overlayHost.dataset.qfavPlayerFullscreen = hideForFullscreen ? "1" : "0";
     overlayLayer.style.visibility = hideForFullscreen ? "hidden" : "visible";
     if (hideForFullscreen) {
       setActiveCoverRecord(null);
