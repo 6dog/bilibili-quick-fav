@@ -592,6 +592,18 @@ async function main() {
         const detailButton = qfavRoot?.querySelector(".qfav-detail-btn") || null;
         const coverButtons = [...(qfavRoot?.querySelectorAll(".qfav-btn") || [])];
         const detailIcon = detailButton?.querySelector("svg");
+        const rectSnapshot = (element) => {
+          if (!element) return null;
+          const rect = element.getBoundingClientRect();
+          return {
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+            right: Math.round(rect.right),
+            bottom: Math.round(rect.bottom),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          };
+        };
         const inspectVisibility = (element) => {
           if (!element) return null;
           const style = getComputedStyle(element);
@@ -628,6 +640,11 @@ async function main() {
           mid: nav?.data?.mid || null,
           quickFavButtons: qfavRoot?.querySelectorAll(".qfav-btn,.qfav-detail-btn").length || 0,
           coverQuickFavButtons: coverButtons.length,
+          coverTargets: coverButtons.map((button) => ({
+            bvid: button.dataset.qfavBvid || null,
+            targetClass: button.qfavTarget?.className || button.qfavTarget?.tagName || null,
+            targetRect: rectSnapshot(button.qfavTarget),
+          })),
           firstCoverBvid: coverButtons[0]?.dataset.qfavBvid || null,
           firstCoverActive: coverButtons[0]?.classList.contains("qfav-active") || false,
           duplicateTargetButtons:
@@ -662,6 +679,16 @@ async function main() {
                 ready: detailButton.dataset.qfavStateReady || null,
                 fill: detailIcon?.getAttribute("fill") || null,
                 stroke: detailIcon?.getAttribute("stroke") || null,
+                rect: rectSnapshot(detailButton),
+                anchorRect: rectSnapshot(detailButton.qfavTarget),
+                nativeFavoriteRect: rectSnapshot(
+                  document.querySelector(".video-toolbar-left .video-fav") ||
+                    document.querySelector(".video-toolbar .video-fav")
+                ),
+                playerRect: rectSnapshot(
+                  document.querySelector("#bilibili-player") ||
+                    document.querySelector(".bpx-player-container")
+                ),
               }
             : null,
           hasTampermonkey: Boolean(

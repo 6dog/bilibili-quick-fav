@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.63-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.65-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -23,6 +23,9 @@ v1.62 起脚本内置 GitHub Raw 更新地址。Tampermonkey 会按扩展设置�
 v1.63 将收藏按钮迁移到独立 Shadow DOM 浮层，不再向 B 站管理的视频卡片、
 详情工具栏或顶部栏写入子元素、属性和样式，避免 SPA 重挂载时出现顶部空栏。
 
+v1.65 播放页面只保留播放器下方操作栏旁的详情快捷收藏按钮，不再给右侧推荐、
+合集等封面重复显示悬停收藏按钮。
+
 自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
 你的浏览器。
 
@@ -34,6 +37,7 @@ v1.63 将收藏按钮迁移到独立 Shadow DOM 浮层，不再向 B 站管理�
 - 点击收藏到你预先选择的快捷收藏夹
 - 再点一次即可取消收藏
 - 视频详情页工具栏旁也会显示同样的快捷收藏按钮
+- 播放页右侧推荐、合集等封面不重复显示快捷收藏按钮
 
 ### 默认倍速
 
