@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.64
+// @version      1.63
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -1055,9 +1055,121 @@
   }
 
   function injectDetailButton() {
-    // 播放详情页已经有 B 站原生收藏入口，不再额外显示快捷收藏按钮。
-    // 保留清理逻辑，确保从旧版本热更新或 SPA 路由切换后不会残留按钮。
+    const match = location.pathname.match(/\/video\/(BV[\w]+)/);
+    if (!match) {
+      removeDetailButton();
+      return;
+    }
+
+    const bvid = match[1];
+    const mount = findDetailButtonMount();
+    if (!mount) return;
+
+    if (
+      detailRecord?.button.isConnected &&
+      detailRecord.bvid === bvid &&
+      detailRecord.anchor === mount &&
+      detailRecord.generation === routeGeneration
+    ) {
+      scheduleOverlayLayout();
+      return;
+    }
     removeDetailButton();
+    ensureOverlayRoot();
+
+    const ICON_SIZE = 28;
+    const generation = routeGeneration;
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "qfav-detail-btn";
+    btn.title = "快捷收藏";
+    btn.dataset.qfavBvid = bvid;
+    btn.qfavTarget = mount;
+    const nativeFavState = getNativeFavoriteState();
+    // 原生收藏按钮会先以未激活状态挂载，再异步补上 `on`。
+    // 这里只用它提供即时视觉反馈，最终状态仍交给接口确认，避免把过早的
+    // “未收藏”快照永久标记为 ready。
+    setButtonVisualState(btn, nativeFavState === true, true, ICON_SIZE);
+
+    let initialStatePromise = null;
+    const loadInitialDetailState = async () => {
+      if (btn.dataset.qfavStateReady === "1") return;
+
+      if (!initialStatePromise) {
+        initialStatePromise = (async () => {
+          try {
+            const aid = await getAid(bvid);
+            if (!aid || generation !== routeGeneration || !btn.isConnected) return;
+            btn.dataset.qfavAid = String(aid);
+
+            const seq = getFavStateSeq(aid);
+            const anyFaved = await checkAnyFavoured(aid);
+            if (
+              generation !== routeGeneration ||
+              getFavStateSeq(aid) !== seq ||
+              !btn.isConnected
+            ) {
+              return;
+            }
+            const finalState =
+              anyFaved !== null
+                ? anyFaved
+                : getNativeFavoriteState() === true;
+            syncFavVisualState(aid, finalState);
+            setButtonVisualState(btn, finalState, true, ICON_SIZE);
+            btn.dataset.qfavStateReady = "1";
+          } catch (_) {
+            const fallbackState = getNativeFavoriteState() === true;
+            setButtonVisualState(btn, fallbackState, true, ICON_SIZE);
+            btn.dataset.qfavStateReady = "1";
+          } finally {
+            initialStatePromise = null;
+          }
+        })();
+      }
+
+      return initialStatePromise;
+    };
+
+    ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
+      (eventName) => {
+        btn.addEventListener(eventName, stopButtonEvent, true);
+      },
+    );
+
+    btn.addEventListener(
+      "click",
+      async (e) => {
+        stopButtonEvent(e);
+
+        try {
+          await loadInitialDetailState();
+          if (generation !== routeGeneration) return;
+          const aid = await getAid(bvid);
+          if (!aid || generation !== routeGeneration) return;
+          btn.dataset.qfavAid = String(aid);
+
+          bumpFavStateSeq(aid);
+
+          await toggleFav(aid, btn, (faved) => {
+            setButtonVisualState(btn, faved, true, ICON_SIZE);
+          });
+        } catch (err) {
+          console.error("[B站一键收藏] 收藏操作出错:", err);
+        }
+      },
+      true,
+    );
+
+    overlayLayer.appendChild(btn);
+    detailRecord = { anchor: mount, bvid, button: btn, generation };
+    void loadInitialDetailState();
+    btn.addEventListener("pointerenter", loadInitialDetailState, {
+      passive: true,
+    });
+    btn.addEventListener("focusin", loadInitialDetailState);
+    scheduleOverlayLayout();
   }
 
   // ===== 默认播放倍速 =====
