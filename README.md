@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.67-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.68-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -31,6 +31,9 @@ v1.66 恢复播放页右侧推荐、合集封面的悬停收藏按钮；进入�
 
 v1.67 同时隐藏全屏画面中误穿透的 B 站原生固定侧栏/迷你播放器按钮，退出全屏
 后自动恢复，不影响普通页面的迷你播放器入口。
+
+v1.68 将隐藏规则直接绑定 B 站网页全屏类和浏览器全屏状态，消除切换全屏时等待
+脚本下一帧更新造成的短暂图标残留，并保留尺寸判断作为兜底。
 
 自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
 你的浏览器。

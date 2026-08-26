@@ -325,11 +325,31 @@ async function main() {
       });
       return state.result?.result?.value || null;
     };
+    const probeDirectFullscreenRule = async () => {
+      const probe = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `(() => {
+          const host = document.querySelector("#qfav-overlay-host");
+          const nativeSideNav = document.querySelector(".fixed-sidenav-storage");
+          if (!host || !nativeSideNav) return null;
+          const previous = host.dataset.qfavPlayerFullscreen;
+          host.dataset.qfavPlayerFullscreen = "0";
+          const result = {
+            display: getComputedStyle(nativeSideNav).display,
+            visibility: getComputedStyle(nativeSideNav).visibility,
+          };
+          host.dataset.qfavPlayerFullscreen = previous || "1";
+          return result;
+        })()`,
+      });
+      return probe.result?.result?.value || null;
+    };
 
     const entered = await toggleWebFullscreen();
     if (entered.result?.result?.value) {
       await wait(700);
       const during = await readFullscreenState();
+      const directRuleDuring = await probeDirectFullscreenRule();
       await toggleWebFullscreen();
       await wait(700);
       const nativeControl = await cdp.send("Runtime.evaluate", {
@@ -348,6 +368,7 @@ async function main() {
         await clickAt(cdp, nativePoint);
         await wait(700);
         nativeDuring = await readFullscreenState();
+        nativeDuring.directRule = await probeDirectFullscreenRule();
         await cdp.send("Runtime.evaluate", {
           expression: `document.exitFullscreen?.() || document.webkitExitFullscreen?.()`,
         });
@@ -357,6 +378,7 @@ async function main() {
       fullscreenTest = {
         tested: true,
         during,
+        directRuleDuring,
         after: await readFullscreenState(),
         nativeDuring,
         nativeAfter,

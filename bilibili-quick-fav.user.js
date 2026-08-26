@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.67
+// @version      1.68
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -458,8 +458,14 @@
       const fullscreenFixStyle = document.createElement("style");
       fullscreenFixStyle.id = FULLSCREEN_FIX_STYLE_ID;
       fullscreenFixStyle.textContent = `
+        body.webscreen-fix .fixed-sidenav-storage,
+        body.webscreen-fix .mini-player-window,
+        :root:has(:fullscreen) .fixed-sidenav-storage,
+        :root:has(:fullscreen) .mini-player-window,
         :root:has(#${OVERLAY_HOST_ID}[data-qfav-player-fullscreen="1"])
-          .fixed-sidenav-storage {
+          .fixed-sidenav-storage,
+        :root:has(#${OVERLAY_HOST_ID}[data-qfav-player-fullscreen="1"])
+          .mini-player-window {
           display: none !important;
           visibility: hidden !important;
           pointer-events: none !important;
