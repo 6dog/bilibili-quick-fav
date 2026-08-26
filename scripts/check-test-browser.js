@@ -11,6 +11,7 @@ const toggleDetailFavorite = process.argv.includes("--toggle-detail-favorite");
 const probeManualRate = process.argv.includes("--probe-manual-rate");
 const probeSemanticRoute = process.argv.includes("--probe-semantic-route");
 const probeFullscreen = process.argv.includes("--probe-fullscreen");
+const probeDetailEdge = process.argv.includes("--probe-detail-edge");
 const repoRoot = path.resolve(__dirname, "..");
 const userscriptPath = path.join(repoRoot, "bilibili-quick-fav.user.js");
 const testUrl = process.env.QFAV_TEST_URL || "https://t.bilibili.com/";
@@ -688,6 +689,47 @@ async function main() {
     };
   }
 
+  let detailEdgeTest = { tested: false };
+  if (probeDetailEdge) {
+    const edgeResult = await cdp.send("Runtime.evaluate", {
+      awaitPromise: true,
+      returnByValue: true,
+      expression: `(async () => {
+        const root = document.querySelector("#qfav-overlay-host")?.shadowRoot;
+        const button = root?.querySelector(".qfav-detail-btn");
+        const anchor = button?.qfavTarget;
+        if (!button || !anchor) return { tested: false, error: "detail anchor missing" };
+        const waitLayout = () => new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve))
+        );
+        const originalStyle = anchor.getAttribute("style");
+        const originalRect = anchor.getBoundingClientRect();
+        const deltaY = innerHeight - 10 - originalRect.top;
+        anchor.style.transform = "translateY(" + deltaY + "px)";
+        window.dispatchEvent(new Event("resize"));
+        await waitLayout();
+        const shiftedRect = anchor.getBoundingClientRect();
+        const shiftedVisibility = getComputedStyle(button).visibility;
+        if (originalStyle === null) anchor.removeAttribute("style");
+        else anchor.setAttribute("style", originalStyle);
+        window.dispatchEvent(new Event("resize"));
+        await waitLayout();
+        return {
+          tested: true,
+          shiftedAnchorTop: Math.round(shiftedRect.top),
+          shiftedAnchorBottom: Math.round(shiftedRect.bottom),
+          viewportHeight: innerHeight,
+          shiftedVisibility,
+          restoredVisibility: getComputedStyle(button).visibility,
+        };
+      })()`,
+    });
+    detailEdgeTest = edgeResult.result?.result?.value || {
+      tested: false,
+      error: "detail edge test returned no value",
+    };
+  }
+
   const result = await cdp.send("Runtime.evaluate", {
     awaitPromise: true,
     returnByValue: true,
@@ -777,6 +819,7 @@ async function main() {
           queryNoise: ${JSON.stringify(queryNoiseResult.result?.result?.value || null)},
           semanticRouteTest: ${JSON.stringify(semanticRouteTest)},
           liveFavoriteTest: ${JSON.stringify(liveFavoriteTest)},
+          detailEdgeTest: ${JSON.stringify(detailEdgeTest)},
           coverHover: ${JSON.stringify(coverHover)},
           pageHeader: inspectVisibility(pageHeader),
           playerTop: inspectVisibility(playerTop),

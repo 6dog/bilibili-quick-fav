@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.68-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.69-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -34,6 +34,9 @@ v1.67 同时隐藏全屏画面中误穿透的 B 站原生固定侧栏/迷你播�
 
 v1.68 将隐藏规则直接绑定 B 站网页全屏类和浏览器全屏状态，消除切换全屏时等待
 脚本下一帧更新造成的短暂图标残留，并保留尺寸判断作为兜底。
+
+v1.69 修复详情收藏按钮的边缘夹取：工具栏滑出视口或切换宽屏时，按钮随之隐藏，
+不再被强行挪到视频字幕附近；回到普通模式后恢复原位置。
 
 自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
 你的浏览器。

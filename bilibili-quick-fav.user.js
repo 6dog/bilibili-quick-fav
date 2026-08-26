@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.68
+// @version      1.69
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -887,20 +887,19 @@
     if (!detailRecord) return;
     const { anchor, button, generation } = detailRecord;
     const rect = anchor.getBoundingClientRect();
+    const x = Math.round(rect.right + 12);
+    const y = Math.round(rect.top + (rect.height - 28) / 2);
     const visible =
       generation === routeGeneration &&
       anchor.isConnected &&
       rect.width > 0 &&
       rect.height > 0 &&
-      rect.bottom > 0 &&
-      rect.top < innerHeight;
+      x >= 0 &&
+      y >= 0 &&
+      x + 28 <= innerWidth &&
+      y + 28 <= innerHeight;
     button.style.visibility = visible ? "visible" : "hidden";
     if (!visible) return;
-    const x = Math.min(innerWidth - 40, Math.max(8, Math.round(rect.right + 12)));
-    const y = Math.min(
-      innerHeight - 36,
-      Math.max(8, Math.round(rect.top + (rect.height - 28) / 2)),
-    );
     button.style.left = `${x}px`;
     button.style.top = `${y}px`;
   }
