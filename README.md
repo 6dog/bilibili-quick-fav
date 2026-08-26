@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.69-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.70-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -37,6 +37,9 @@ v1.68 将隐藏规则直接绑定 B 站网页全屏类和浏览器全屏状态�
 
 v1.69 修复详情收藏按钮的边缘夹取：工具栏滑出视口或切换宽屏时，按钮随之隐藏，
 不再被强行挪到视频字幕附近；回到普通模式后恢复原位置。
+
+v1.70 合并封面与详情收藏按钮的状态加载、点击和图标更新流程，精简重复样式、
+页面扫描与浏览器回归输出；功能与页面行为保持不变。
 
 自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
 你的浏览器。

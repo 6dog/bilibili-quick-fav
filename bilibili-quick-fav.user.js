@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.69
+// @version      1.70
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -19,14 +19,11 @@
 
   // ===== 常量 =====
   const FAV_FOLDER_KEY = "qfav_folder_id";
-  const FAV_FOLDER_NAME_KEY = "qfav_folder_name";
   const DEFAULT_PLAYBACK_RATE = 1.5;
   const ENABLE_DEFAULT_RATE = true;
   const OVERLAY_HOST_ID = "qfav-overlay-host";
   const FULLSCREEN_FIX_STYLE_ID = "qfav-fullscreen-native-ui-fix";
   const PLAYBACK_BOOTSTRAP_DELAY_MS = 1500;
-  const DOM_BOOTSTRAP_DELAY_MS = 0;
-  const FAVORITES_BOOTSTRAP_DELAY_MS = 0;
   const DOM_SCAN_THROTTLE_MS = 50;
   const FAVORITES_SCAN_THROTTLE_MS = 80;
   const FAVORITES_EXTRA_SCAN_DELAYS = [2000, 5000, 8000];
@@ -116,7 +113,6 @@
   }
 
   async function getFavFolderStates(aid) {
-    const folderId = GM_getValue(FAV_FOLDER_KEY, null);
     const uid = await getUid();
 
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -131,11 +127,7 @@
         return null;
       }
 
-      const folder = data.data.list.find(
-        (item) => String(item.id) === String(folderId),
-      );
       return {
-        targetFaved: folder ? Number(folder.fav_state) === 1 : false,
         selectedFolderIds: data.data.list
           .filter((item) => Number(item.fav_state) === 1)
           .map((item) => item.id),
@@ -178,7 +170,8 @@
     return next;
   }
 
-  function getNativeFavoriteState(root = document) {
+  function getNativeFavoriteState() {
+    const root = document;
     const favButton =
       root.querySelector(".video-toolbar-left .video-fav") ||
       root.querySelector(".video-toolbar .video-fav") ||
@@ -316,19 +309,16 @@
           color: "#333",
           transition: "background 0.2s",
         });
-        btn.addEventListener(
-          "mouseenter",
-          () => (btn.style.background = "#00a1d6"),
-        );
-        btn.addEventListener("mouseenter", () => (btn.style.color = "#fff"));
-        btn.addEventListener(
-          "mouseleave",
-          () => (btn.style.background = "#f5f5f5"),
-        );
-        btn.addEventListener("mouseleave", () => (btn.style.color = "#333"));
+        btn.addEventListener("mouseenter", () => {
+          btn.style.background = "#00a1d6";
+          btn.style.color = "#fff";
+        });
+        btn.addEventListener("mouseleave", () => {
+          btn.style.background = "#f5f5f5";
+          btn.style.color = "#333";
+        });
         btn.addEventListener("click", () => {
           GM_setValue(FAV_FOLDER_KEY, folder.id);
-          GM_setValue(FAV_FOLDER_NAME_KEY, folder.title);
           overlay.remove();
           resolve(folder.id);
         });
@@ -371,10 +361,9 @@
     return folderPickerPromise;
   }
 
-  // ===== 按钮 SVG 图标 =====
-  // 书签样式，配色靠拢 B 站蓝 (#00aeec)
-  // starSvg 这个名字保留不改，避免牵动所有调用点
-  function starSvg(filled, dark = false, size = 20) {
+  // ===== 收藏按钮 =====
+
+  function bookmarkSvg(filled, dark = false, size = 20) {
     const activeColor = "#00aeec"; // B 站主题蓝
     const idleStroke = dark ? "rgba(24,25,28,0.55)" : "rgba(255,255,255,0.9)";
     const stroke = filled ? activeColor : idleStroke;
@@ -386,23 +375,38 @@
 
   function setButtonVisualState(btn, filled, dark = false, size = 20) {
     if (!btn) return;
-    btn.innerHTML = starSvg(filled, dark, size);
+    btn.innerHTML = bookmarkSvg(filled, dark, size);
     btn.classList.toggle("qfav-active", filled);
     btn.classList.remove("qfav-state-pending");
+  }
+
+  function renderFavoriteButton(btn, filled) {
+    setButtonVisualState(
+      btn,
+      filled,
+      btn.dataset.qfavDark === "1",
+      Number(btn.dataset.qfavIconSize) || 20,
+    );
+  }
+
+  function createFavoriteButton({ className, bvid, target, filled, dark, size }) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    button.title = "快捷收藏";
+    button.dataset.qfavBvid = bvid;
+    button.dataset.qfavDark = dark ? "1" : "0";
+    button.dataset.qfavIconSize = String(size);
+    button.qfavTarget = target;
+    renderFavoriteButton(button, filled);
+    return button;
   }
 
   function syncFavVisualState(aid, faved) {
     favCache.set(aid, faved);
     overlayRoot
-      .querySelectorAll(`.qfav-btn[data-qfav-aid="${aid}"]`)
-      .forEach((button) => setButtonVisualState(button, faved));
-    overlayRoot
-      .querySelectorAll(`.qfav-detail-btn[data-qfav-aid="${aid}"]`)
-      .forEach((button) => setButtonVisualState(button, faved, true, 28));
-  }
-
-  function clearFavState(aid) {
-    favCache.delete(aid);
+      ?.querySelectorAll(`[data-qfav-aid="${aid}"]`)
+      .forEach((button) => renderFavoriteButton(button, faved));
   }
 
   function isFavoritesCollectionPage() {
@@ -489,29 +493,34 @@
         contain: layout style;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
-      .qfav-btn {
+      .qfav-btn,
+      .qfav-detail-btn {
         position: fixed;
         top: 0;
         left: 0;
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        background: rgba(0, 0, 0, 0.55);
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
-        opacity: 0;
-        transition: opacity 0.08s, transform 0.15s;
-        z-index: 10000;
         border: none;
         outline: none;
         padding: 0;
-        pointer-events: none;
         -webkit-tap-highlight-color: transparent;
       }
+      .qfav-btn {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.55);
+        opacity: 0;
+        transition: opacity 0.08s, transform 0.15s;
+        z-index: 10000;
+        pointer-events: none;
+      }
       .qfav-btn:focus,
-      .qfav-btn:focus-visible {
+      .qfav-btn:focus-visible,
+      .qfav-detail-btn:focus,
+      .qfav-detail-btn:focus-visible {
         outline: none;
       }
       .qfav-btn:hover {
@@ -537,31 +546,17 @@
         pointer-events: auto;
       }
       .qfav-detail-btn {
-        position: fixed;
-        top: 0;
-        left: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         width: 28px !important;
         height: 28px !important;
         min-width: 28px;
         min-height: 28px;
         background: transparent;
-        cursor: pointer;
-        border: none;
-        outline: none;
         padding: 0 !important;
         transition: transform 0.15s;
         margin: 0 !important;
         line-height: 28px !important;
         pointer-events: auto;
         z-index: 1;
-        -webkit-tap-highlight-color: transparent;
-      }
-      .qfav-detail-btn:focus,
-      .qfav-detail-btn:focus-visible {
-        outline: none;
       }
       .qfav-detail-btn:hover {
         transform: scale(1.1);
@@ -586,7 +581,7 @@
 
   // ===== 收藏切换逻辑 =====
 
-  async function toggleFav(aid, btn, updateIcon) {
+  async function toggleFav(aid, btn) {
     // 同一个 aid 正在操作时复用已有 promise，避免竞态
     if (pendingToggles.has(aid)) {
       return pendingToggles.get(aid);
@@ -603,12 +598,10 @@
 
       try {
         syncFavVisualState(aid, nextVisualFaved);
-        updateIcon(nextVisualFaved);
 
         const folderId = await ensureFolderId();
         if (!folderId) {
           syncFavVisualState(aid, previousVisualFaved);
-          updateIcon(previousVisualFaved);
           return previousVisualFaved;
         }
 
@@ -631,16 +624,12 @@
           return confirmedVisualFaved;
         } else {
           console.error("[B站一键收藏] 操作失败:", result.message);
-          clearFavState(aid);
           syncFavVisualState(aid, previousVisualFaved);
-          updateIcon(previousVisualFaved);
           return previousVisualFaved;
         }
       } catch (e) {
         console.error("[B站一键收藏] 错误:", e);
-        clearFavState(aid);
         syncFavVisualState(aid, previousVisualFaved);
-        updateIcon(previousVisualFaved);
         return previousVisualFaved;
       } finally {
         btn.classList.remove("qfav-loading");
@@ -658,20 +647,86 @@
     e.stopImmediatePropagation();
   }
 
+  function createFavoriteStateLoader({
+    button,
+    bvid,
+    generation,
+    isValid,
+    fallbackState = () => false,
+  }) {
+    let pending = null;
+
+    return async () => {
+      if (button.dataset.qfavStateReady === "1") return;
+      if (pending) return pending;
+
+      pending = (async () => {
+        try {
+          const aid = await getAid(bvid);
+          if (!aid || generation !== routeGeneration || !isValid()) return;
+          button.dataset.qfavAid = String(aid);
+
+          let faved = favCache.get(aid);
+          if (faved === undefined) {
+            const seq = getFavStateSeq(aid);
+            const apiState = await checkAnyFavoured(aid);
+            if (
+              generation !== routeGeneration ||
+              getFavStateSeq(aid) !== seq ||
+              !isValid()
+            ) {
+              return;
+            }
+            faved = apiState ?? fallbackState();
+            syncFavVisualState(aid, faved);
+          } else {
+            renderFavoriteButton(button, faved);
+          }
+          button.dataset.qfavStateReady = "1";
+        } catch (_) {
+          renderFavoriteButton(button, fallbackState());
+          button.dataset.qfavStateReady = "1";
+        } finally {
+          pending = null;
+        }
+      })();
+
+      return pending;
+    };
+  }
+
+  function bindFavoriteButton(button, { bvid, generation, loadState }) {
+    ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
+      (eventName) => button.addEventListener(eventName, stopButtonEvent, true),
+    );
+
+    button.addEventListener(
+      "click",
+      async (event) => {
+        stopButtonEvent(event);
+        try {
+          await loadState();
+          if (generation !== routeGeneration || !button.isConnected) return;
+          const aid = await getAid(bvid);
+          if (!aid || generation !== routeGeneration) return;
+          button.dataset.qfavAid = String(aid);
+          bumpFavStateSeq(aid);
+          await toggleFav(aid, button);
+        } catch (error) {
+          console.error("[B站一键收藏] 收藏操作出错:", error);
+        }
+      },
+      true,
+    );
+  }
+
   // ===== 提取 BVID =====
 
   function extractBvid(element) {
-    const links = element.querySelectorAll('a[href*="/video/BV"]');
-    for (const link of links) {
-      const match = link.href.match(/(BV[\w]+)/);
-      if (match) return match[1];
-    }
-    // 也尝试从 element 自身
-    if (element.tagName === "A" && element.href) {
-      const match = element.href.match(/(BV[\w]+)/);
-      if (match) return match[1];
-    }
-    return null;
+    const link = element.matches?.('a[href*="/video/BV"]')
+      ? element
+      : element.querySelector?.('a[href*="/video/BV"]');
+    return link?.href.match(/(BV[\w]+)/)?.[1] || null;
   }
 
   // ===== AID 缓存（BV → AID）=====
@@ -714,17 +769,17 @@
   function createCoverRecord(cardEl, bvid) {
     ensureOverlayRoot();
     const generation = routeGeneration;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "qfav-btn";
-    btn.title = "快捷收藏";
-    btn.dataset.qfavBvid = bvid;
-    btn.qfavTarget = cardEl;
-    if (isFavoritesCollectionPage()) {
-      setButtonVisualState(btn, true);
+    const onFavoritesPage = isFavoritesCollectionPage();
+    const btn = createFavoriteButton({
+      className: "qfav-btn",
+      bvid,
+      target: cardEl,
+      filled: onFavoritesPage,
+      dark: false,
+      size: 20,
+    });
+    if (onFavoritesPage) {
       btn.dataset.qfavStateReady = "1";
-    } else {
-      setButtonVisualState(btn, false);
     }
 
     const record = {
@@ -734,84 +789,13 @@
       generation,
       loadState: null,
     };
-    let initialStatePromise = null;
-    const loadInitialCoverState = async () => {
-      if (isFavoritesCollectionPage() || btn.dataset.qfavStateReady === "1") return;
-
-      if (!initialStatePromise) {
-        initialStatePromise = (async () => {
-          try {
-            const aid = await getAid(bvid);
-            if (
-              !aid ||
-              generation !== routeGeneration ||
-              !btn.isConnected ||
-              !cardEl.isConnected
-            ) {
-              return;
-            }
-            btn.dataset.qfavAid = String(aid);
-
-            if (!favCache.has(aid)) {
-              const seq = getFavStateSeq(aid);
-              const anyFaved = await checkAnyFavoured(aid);
-              if (
-                generation !== routeGeneration ||
-                getFavStateSeq(aid) !== seq ||
-                !btn.isConnected
-              ) {
-                return;
-              }
-              syncFavVisualState(aid, anyFaved === true);
-              btn.dataset.qfavStateReady = "1";
-              return;
-            }
-
-            setButtonVisualState(btn, favCache.get(aid) === true);
-            btn.dataset.qfavStateReady = "1";
-          } catch (_) {
-            setButtonVisualState(btn, false);
-            btn.dataset.qfavStateReady = "1";
-          } finally {
-            initialStatePromise = null;
-          }
-        })();
-      }
-
-      return initialStatePromise;
-    };
-    record.loadState = loadInitialCoverState;
-
-    ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
-      (eventName) => {
-        btn.addEventListener(eventName, stopButtonEvent, true);
-      },
-    );
-
-    // 阻止点击事件冒泡（避免跳转到视频页）
-    btn.addEventListener(
-      "click",
-      async (e) => {
-        stopButtonEvent(e);
-
-        try {
-          await loadInitialCoverState();
-          if (generation !== routeGeneration) return;
-          const aid = await getAid(bvid);
-          if (!aid || generation !== routeGeneration) return;
-          btn.dataset.qfavAid = String(aid);
-
-          bumpFavStateSeq(aid);
-
-          await toggleFav(aid, btn, (faved) => {
-            setButtonVisualState(btn, faved);
-          });
-        } catch (err) {
-          console.error("[B站一键收藏] 收藏操作出错:", err);
-        }
-      },
-      true,
-    );
+    record.loadState = createFavoriteStateLoader({
+      button: btn,
+      bvid,
+      generation,
+      isValid: () => btn.isConnected && cardEl.isConnected,
+    });
+    bindFavoriteButton(btn, { bvid, generation, loadState: record.loadState });
 
     overlayLayer.appendChild(btn);
     coverRecords.set(cardEl, record);
@@ -820,11 +804,7 @@
     if (coverResizeObserver) coverResizeObserver.observe(cardEl);
     scheduleOverlayLayout();
 
-    if (isFavoritesCollectionPage()) {
-      return record;
-    }
-
-    prefetchCoverStateWhenVisible(record);
+    if (!onFavoritesPage) prefetchCoverStateWhenVisible(record);
     return record;
   }
 
@@ -1076,27 +1056,18 @@
 
   // ===== 详情页按钮 =====
 
-  function findDetailToolbar() {
-    return (
-      document.querySelector(".video-toolbar-left") ||
-      document.querySelector(".video-toolbar") ||
-      document.querySelector("#toolbar_module") ||
-      document.querySelector(".video-info-detail")
-    );
-  }
-
   function findDetailButtonMount() {
-    const leftToolbar = document.querySelector(".video-toolbar-left");
-    if (leftToolbar && !isInsideHeader(leftToolbar)) return leftToolbar;
-
-    const toolbar = findDetailToolbar();
+    const toolbar =
+      document.querySelector(".video-toolbar-left") ||
+      document.querySelector(
+        ".video-toolbar, #toolbar_module, .video-info-detail",
+      );
     if (!toolbar || isInsideHeader(toolbar)) return null;
     return toolbar.querySelector(".video-toolbar-left") || toolbar;
   }
 
   function removeDetailButton() {
     if (!detailRecord) return;
-    buttonRecords.delete(detailRecord.button);
     detailRecord.button.remove();
     detailRecord = null;
   }
@@ -1124,98 +1095,35 @@
     removeDetailButton();
     ensureOverlayRoot();
 
-    const ICON_SIZE = 28;
     const generation = routeGeneration;
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "qfav-detail-btn";
-    btn.title = "快捷收藏";
-    btn.dataset.qfavBvid = bvid;
-    btn.qfavTarget = mount;
     const nativeFavState = getNativeFavoriteState();
+    const btn = createFavoriteButton({
+      className: "qfav-detail-btn",
+      bvid,
+      target: mount,
+      filled: nativeFavState === true,
+      dark: true,
+      size: 28,
+    });
     // 原生收藏按钮会先以未激活状态挂载，再异步补上 `on`。
     // 这里只用它提供即时视觉反馈，最终状态仍交给接口确认，避免把过早的
     // “未收藏”快照永久标记为 ready。
-    setButtonVisualState(btn, nativeFavState === true, true, ICON_SIZE);
-
-    let initialStatePromise = null;
-    const loadInitialDetailState = async () => {
-      if (btn.dataset.qfavStateReady === "1") return;
-
-      if (!initialStatePromise) {
-        initialStatePromise = (async () => {
-          try {
-            const aid = await getAid(bvid);
-            if (!aid || generation !== routeGeneration || !btn.isConnected) return;
-            btn.dataset.qfavAid = String(aid);
-
-            const seq = getFavStateSeq(aid);
-            const anyFaved = await checkAnyFavoured(aid);
-            if (
-              generation !== routeGeneration ||
-              getFavStateSeq(aid) !== seq ||
-              !btn.isConnected
-            ) {
-              return;
-            }
-            const finalState =
-              anyFaved !== null
-                ? anyFaved
-                : getNativeFavoriteState() === true;
-            syncFavVisualState(aid, finalState);
-            setButtonVisualState(btn, finalState, true, ICON_SIZE);
-            btn.dataset.qfavStateReady = "1";
-          } catch (_) {
-            const fallbackState = getNativeFavoriteState() === true;
-            setButtonVisualState(btn, fallbackState, true, ICON_SIZE);
-            btn.dataset.qfavStateReady = "1";
-          } finally {
-            initialStatePromise = null;
-          }
-        })();
-      }
-
-      return initialStatePromise;
-    };
-
-    ["pointerdown", "mousedown", "mouseup", "pointerup"].forEach(
-      (eventName) => {
-        btn.addEventListener(eventName, stopButtonEvent, true);
-      },
-    );
-
-    btn.addEventListener(
-      "click",
-      async (e) => {
-        stopButtonEvent(e);
-
-        try {
-          await loadInitialDetailState();
-          if (generation !== routeGeneration) return;
-          const aid = await getAid(bvid);
-          if (!aid || generation !== routeGeneration) return;
-          btn.dataset.qfavAid = String(aid);
-
-          bumpFavStateSeq(aid);
-
-          await toggleFav(aid, btn, (faved) => {
-            setButtonVisualState(btn, faved, true, ICON_SIZE);
-          });
-        } catch (err) {
-          console.error("[B站一键收藏] 收藏操作出错:", err);
-        }
-      },
-      true,
-    );
+    const loadState = createFavoriteStateLoader({
+      button: btn,
+      bvid,
+      generation,
+      isValid: () => btn.isConnected && mount.isConnected,
+      fallbackState: () => getNativeFavoriteState() === true,
+    });
+    bindFavoriteButton(btn, { bvid, generation, loadState });
 
     overlayLayer.appendChild(btn);
     detailRecord = { anchor: mount, bvid, button: btn, generation };
-    void loadInitialDetailState();
-    btn.addEventListener("pointerenter", loadInitialDetailState, {
+    void loadState();
+    btn.addEventListener("pointerenter", loadState, {
       passive: true,
     });
-    btn.addEventListener("focusin", loadInitialDetailState);
+    btn.addEventListener("focusin", loadState);
     scheduleOverlayLayout();
   }
 
@@ -1393,11 +1301,9 @@
       queueApplyDefaultRate(video, delay);
     };
 
-    video.addEventListener("loadstart", () => requestApply(0));
-    video.addEventListener("loadedmetadata", () => requestApply(0));
-    video.addEventListener("canplay", () => requestApply(0));
-    video.addEventListener("play", () => requestApply(0));
-    video.addEventListener("playing", () => requestApply(0));
+    ["loadstart", "loadedmetadata", "canplay", "play", "playing"].forEach(
+      (eventName) => video.addEventListener(eventName, () => requestApply()),
+    );
     video.addEventListener("ratechange", () => {
       const currentRate = getCurrentPlayerRate(video);
       if (nearlyEqualRate(currentRate, DEFAULT_PLAYBACK_RATE)) {
@@ -1559,13 +1465,12 @@
 
   // ===== MutationObserver 监听 DOM 变化 =====
 
-  function isFavoritesPage() {
+  function isSpaceFavoritesPage() {
     return /space\.bilibili\.com\/\d+\/favlist/.test(location.href);
   }
 
   function getScanDelay() {
-    if (isSupportedPlaybackPage()) return PLAYBACK_BOOTSTRAP_DELAY_MS;
-    return isFavoritesPage() ? FAVORITES_BOOTSTRAP_DELAY_MS : DOM_BOOTSTRAP_DELAY_MS;
+    return isSupportedPlaybackPage() ? PLAYBACK_BOOTSTRAP_DELAY_MS : 0;
   }
 
   function startObserver() {
@@ -1573,12 +1478,8 @@
       // 视频页仍等顶部栏完成初次挂载，但所有收藏控件只写入隔离浮层。
       if (isBiliHeaderMountPending()) return;
       scanVideoCards();
-      if (!isFavoritesPage()) {
-        injectDetailButton();
-      }
-      if (!isFavoritesPage()) {
-        scanVideos();
-      }
+      injectDetailButton();
+      scanVideos();
     };
 
     let scanTimer = null;
@@ -1586,7 +1487,7 @@
     const observer = new MutationObserver(() => {
       // 收藏夹页面内容是异步瀑布流，低频补扫即可，避免错过晚加载的卡片
       if (scanTimer) return;
-      const throttle = isFavoritesPage()
+      const throttle = isSpaceFavoritesPage()
         ? FAVORITES_SCAN_THROTTLE_MS
         : DOM_SCAN_THROTTLE_MS;
       scanTimer = setTimeout(() => {
@@ -1605,7 +1506,7 @@
     // 先处理 DOMContentLoaded 时已经存在的卡片，其余内容由 observer 补扫。
     runDomScan();
 
-    if (isFavoritesPage()) {
+    if (isSpaceFavoritesPage()) {
       FAVORITES_EXTRA_SCAN_DELAYS.forEach((delay) => {
         setTimeout(runDomScan, delay);
       });

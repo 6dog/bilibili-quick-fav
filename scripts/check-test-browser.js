@@ -744,18 +744,6 @@ async function main() {
         const detailButton = qfavRoot?.querySelector(".qfav-detail-btn") || null;
         const coverButtons = [...(qfavRoot?.querySelectorAll(".qfav-btn") || [])];
         const detailIcon = detailButton?.querySelector("svg");
-        const rectSnapshot = (element) => {
-          if (!element) return null;
-          const rect = element.getBoundingClientRect();
-          return {
-            left: Math.round(rect.left),
-            top: Math.round(rect.top),
-            right: Math.round(rect.right),
-            bottom: Math.round(rect.bottom),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
-          };
-        };
         const inspectVisibility = (element) => {
           if (!element) return null;
           const style = getComputedStyle(element);
@@ -789,14 +777,8 @@ async function main() {
           url: location.href,
           title: document.title,
           loggedIn: Boolean(nav?.data?.isLogin),
-          mid: nav?.data?.mid || null,
           quickFavButtons: qfavRoot?.querySelectorAll(".qfav-btn,.qfav-detail-btn").length || 0,
           coverQuickFavButtons: coverButtons.length,
-          coverTargets: coverButtons.map((button) => ({
-            bvid: button.dataset.qfavBvid || null,
-            targetClass: button.qfavTarget?.className || button.qfavTarget?.tagName || null,
-            targetRect: rectSnapshot(button.qfavTarget),
-          })),
           firstCoverBvid: coverButtons[0]?.dataset.qfavBvid || null,
           firstCoverActive: coverButtons[0]?.classList.contains("qfav-active") || false,
           duplicateTargetButtons:
@@ -825,15 +807,6 @@ async function main() {
           playerTop: inspectVisibility(playerTop),
           playerTopHover: ${JSON.stringify(playerTopHover)},
           fullscreenTest: ${JSON.stringify(fullscreenTest)},
-          screenControls: [...document.querySelectorAll(
-            '[class*="fullscreen"],[class*="webscreen"],[class*="web-full"],[data-text*="全屏"],[aria-label*="全屏"]'
-          )].slice(0, 30).map((element) => ({
-            tag: element.tagName,
-            className: typeof element.className === "string" ? element.className : null,
-            title: element.getAttribute("title"),
-            ariaLabel: element.getAttribute("aria-label"),
-            dataText: element.getAttribute("data-text"),
-          })),
           playbackRate: mainVideo?.playbackRate || null,
           manualRateTest: ${JSON.stringify(manualRateTest)},
           detailQuickFav: detailButton
@@ -842,24 +815,8 @@ async function main() {
                 ready: detailButton.dataset.qfavStateReady || null,
                 fill: detailIcon?.getAttribute("fill") || null,
                 stroke: detailIcon?.getAttribute("stroke") || null,
-                rect: rectSnapshot(detailButton),
-                anchorRect: rectSnapshot(detailButton.qfavTarget),
-                nativeFavoriteRect: rectSnapshot(
-                  document.querySelector(".video-toolbar-left .video-fav") ||
-                    document.querySelector(".video-toolbar .video-fav")
-                ),
-                playerRect: rectSnapshot(
-                  document.querySelector("#bilibili-player") ||
-                    document.querySelector(".bpx-player-container")
-                ),
               }
             : null,
-          hasTampermonkey: Boolean(
-            [...document.querySelectorAll("script")].some((script) =>
-              /tampermonkey|userscript/i.test(script.src || script.textContent || "")
-            )
-          ),
-          bodyPreview: document.body.innerText.slice(0, 120),
         };
       }
     )()`,
