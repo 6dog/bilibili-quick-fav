@@ -100,6 +100,9 @@ scripts/check-test-browser.js
 # 注入当前工作区脚本，检查 Shadow DOM、顶部栏和悬停显示
 scripts/check-test-browser.js --inject-local-script
 
+# 直接从 GitHub Raw 读取公开版本到内存并运行同一套门禁
+scripts/check-test-browser.js --inject-public-script
+
 # 可选：检查布局全过程、语义路由和用户手动改速
 scripts/check-test-browser.js --inject-local-script --probe-layout-timeline --probe-detail-edge --probe-fullscreen
 scripts/check-test-browser.js --inject-local-script --probe-semantic-route --probe-manual-rate

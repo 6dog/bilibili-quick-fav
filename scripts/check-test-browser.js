@@ -7,6 +7,8 @@ const path = require("node:path");
 const port = process.env.QFAV_BROWSER_PORT || "9333";
 const base = `http://127.0.0.1:${port}`;
 const injectLocalScript = process.argv.includes("--inject-local-script");
+const injectPublicScript = process.argv.includes("--inject-public-script");
+const injectUserscript = injectLocalScript || injectPublicScript;
 const toggleDetailFavorite = process.argv.includes("--toggle-detail-favorite");
 const probeManualRate = process.argv.includes("--probe-manual-rate");
 const probeSemanticRoute = process.argv.includes("--probe-semantic-route");
@@ -286,7 +288,7 @@ async function main() {
     source: layoutMonitorSource,
   });
 
-  if (injectLocalScript) {
+  if (injectUserscript) {
     const stateFailureShim = probeStateFailure
       ? `
         globalThis.__qfavFailFavoriteState = true;
@@ -310,7 +312,15 @@ async function main() {
         globalThis.__qfavTestValues[key] = value;
       };
     `;
-    const source = `${stateFailureShim}\n${gmTestShim}\n${fs.readFileSync(userscriptPath, "utf8")}`;
+    const userscriptSource = injectPublicScript
+      ? await fetch(
+          "https://raw.githubusercontent.com/6dog/bilibili-quick-fav/main/bilibili-quick-fav.user.js",
+        ).then((response) => {
+          if (!response.ok) throw new Error(`public userscript HTTP ${response.status}`);
+          return response.text();
+        })
+      : fs.readFileSync(userscriptPath, "utf8");
+    const source = `${stateFailureShim}\n${gmTestShim}\n${userscriptSource}`;
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source });
   }
 
