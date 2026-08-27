@@ -12,6 +12,9 @@ const probeManualRate = process.argv.includes("--probe-manual-rate");
 const probeSemanticRoute = process.argv.includes("--probe-semantic-route");
 const probeFullscreen = process.argv.includes("--probe-fullscreen");
 const probeDetailEdge = process.argv.includes("--probe-detail-edge");
+const probeLayoutTimeline =
+  process.argv.includes("--probe-layout-timeline") || probeDetailEdge;
+const probeStateFailure = process.argv.includes("--probe-state-failure");
 const repoRoot = path.resolve(__dirname, "..");
 const userscriptPath = path.join(repoRoot, "bilibili-quick-fav.user.js");
 const testUrl = process.env.QFAV_TEST_URL || "https://t.bilibili.com/";
@@ -108,6 +111,110 @@ async function clickAt(cdp, point) {
   });
 }
 
+function collectAssertionFailures(result) {
+  const failures = [];
+  const expect = (condition, message) => {
+    if (!condition) failures.push(message);
+  };
+  const isVideoPage = /\/video\/BV/.test(result.url || "");
+
+  expect(result.loggedIn === true, "dedicated browser is not logged in");
+  expect(result.overlay?.directBodyChild, "overlay is not a direct body child");
+  expect(result.overlay?.hasShadowRoot, "overlay Shadow DOM is missing");
+  expect(result.quickFavButtons > 0, "no quick-favorite buttons were created");
+  expect(result.duplicateTargetButtons === 0, "duplicate cover buttons detected");
+  expect(result.nativeQuickFavButtons === 0, "buttons leaked into native DOM");
+  expect(result.mutatedNativeCards === 0, "native cards were mutated");
+  expect((result.pageHeader?.textLength || 0) > 0, "Bilibili header is empty");
+  expect(
+    (result.layoutTimeline?.violations?.length || 0) === 0,
+    "a visible detail button overlapped or moved above the player",
+  );
+
+  if (result.coverHover) {
+    if (!probeStateFailure) {
+      expect(Number(result.coverHover.defaultOpacity) === 0, "cover button is visible before hover");
+      expect(
+        result.coverHover.defaultPointerEvents === "none",
+        "cover button accepts clicks before hover",
+      );
+      expect(Number(result.coverHover.hoveredOpacity) >= 0.9, "cover button did not appear on hover");
+    }
+  }
+
+  if (isVideoPage) {
+    expect(result.detailQuickFav?.count === 1, "detail button count is not exactly one");
+    expect(result.detailQuickFav?.ready === "1", "detail favorite state was not confirmed");
+  }
+
+  if (probeLayoutTimeline) {
+    expect(result.viewportLayoutTest?.tested, "viewport layout probe did not run");
+    expect(result.viewportLayoutTest?.entries?.length === 4, "viewport matrix is incomplete");
+    for (const entry of result.viewportLayoutTest?.entries || []) {
+      expect(entry.state, `viewport ${entry.width}x${entry.height} has no detail state`);
+      if (entry.state?.visible) {
+        expect(!entry.state.overlaps, `detail overlaps player at ${entry.width}x${entry.height}`);
+        expect(entry.state.anchorBelow, `detail anchor is above player at ${entry.width}x${entry.height}`);
+      }
+      expect(entry.state?.detailCount === 1, `detail count changed at ${entry.width}x${entry.height}`);
+    }
+  }
+
+  if (probeDetailEdge) {
+    expect(result.detailEdgeTest?.tested, "detail edge probe did not run");
+    expect(result.detailEdgeTest?.shiftedVisibility === "hidden", "offscreen detail remained visible");
+    expect(result.detailEdgeTest?.overlappingVisibility === "hidden", "overlapping detail remained visible");
+    expect(result.detailEdgeTest?.animatedVisibleOverlaps === 0, "detail flashed during layout animation");
+    expect(result.detailEdgeTest?.restoredVisibility === "visible", "detail did not restore after layout settled");
+  }
+
+  if (probeFullscreen) {
+    expect(result.fullscreenTest?.tested, "fullscreen probe did not run");
+    expect(result.fullscreenTest?.during?.overlayVisibility === "hidden", "web fullscreen overlay is visible");
+    expect(result.fullscreenTest?.nativeDuring?.overlayVisibility === "hidden", "native fullscreen overlay is visible");
+    expect(result.fullscreenTest?.after?.overlayVisibility === "visible", "overlay did not restore after fullscreen");
+  }
+
+  if (probeSemanticRoute) {
+    const semantic = result.semanticRouteTest;
+    expect(semantic?.tested, "semantic route probe did not run");
+    expect(
+      semantic?.changed?.detailBvid === semantic?.changed?.expectedBvid,
+      "detail button retained the previous BVID after SPA navigation",
+    );
+    expect(semantic?.changed?.detailCount === 1, "SPA navigation created duplicate detail buttons");
+  }
+
+  if (probeManualRate) {
+    expect(result.manualRateTest?.tested, "manual rate probe did not run");
+    expect(result.manualRateTest?.afterManual === 2, "manual 2x rate was not applied");
+    expect(result.manualRateTest?.retained === 2, "manual 2x rate was overridden");
+    expect(result.manualRateTest?.restored === 1.5, "playback rate was not restored to 1.5x");
+  }
+
+  if (toggleDetailFavorite) {
+    const live = result.liveFavoriteTest;
+    expect(live?.tested, "live favorite probe did not run");
+    expect(!live?.error, `live favorite probe failed: ${live?.error || "unknown error"}`);
+    expect(live?.firstAny === !live?.originalAny, "first favorite toggle did not change state");
+    expect(live?.secondAny === live?.originalAny, "second favorite toggle did not restore state");
+    expect(live?.restored === true, "favorite folders were not restored exactly");
+  }
+
+  if (probeStateFailure) {
+    const stateFailure = result.stateFailureTest;
+    expect(stateFailure?.tested, "favorite-state failure probe did not run");
+    expect(stateFailure?.before?.ready !== "1", "failed state request was marked confirmed");
+    expect(stateFailure?.before?.pending === true, "failed state request did not remain pending");
+    expect(stateFailure?.before?.visibility === "hidden", "unconfirmed detail button was visible");
+    expect(stateFailure?.after?.ready === "1", "favorite state did not recover after retry");
+    expect(stateFailure?.after?.pending === false, "pending state remained after successful retry");
+    expect(stateFailure?.after?.visibility === "visible", "detail button did not restore after retry");
+  }
+
+  return failures;
+}
+
 async function main() {
   const target = await getJson(`${base}/json/new?about:blank`, {
     method: "PUT",
@@ -117,7 +224,82 @@ async function main() {
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
 
+  const layoutMonitorSource = `
+    globalThis.__qfavLayoutMonitor = {
+      samples: 0,
+      visibleSamples: 0,
+      violations: [],
+    };
+    (() => {
+      const sample = () => {
+        const monitor = globalThis.__qfavLayoutMonitor;
+        const host = document.querySelector("#qfav-overlay-host");
+        const root = host?.shadowRoot;
+        const layer = root?.querySelector(".qfav-layer");
+        const button = root?.querySelector(".qfav-detail-btn");
+        const player =
+          document.querySelector("#bilibili-player") ||
+          document.querySelector(".bpx-player-container") ||
+          document.querySelector(".bilibili-player-video");
+        monitor.samples += 1;
+        if (button && player && layer) {
+          const buttonRect = button.getBoundingClientRect();
+          const playerRect = player.getBoundingClientRect();
+          const anchorRect = button.qfavTarget?.getBoundingClientRect();
+          const visible =
+            getComputedStyle(button).visibility === "visible" &&
+            getComputedStyle(layer).visibility === "visible" &&
+            buttonRect.width > 0 &&
+            buttonRect.height > 0;
+          if (visible) {
+            monitor.visibleSamples += 1;
+            const overlaps = !(
+              buttonRect.bottom <= playerRect.top ||
+              buttonRect.top >= playerRect.bottom ||
+              buttonRect.right <= playerRect.left ||
+              buttonRect.left >= playerRect.right
+            );
+            const anchorBelow = Boolean(anchorRect) && anchorRect.top >= playerRect.bottom;
+            if ((overlaps || !anchorBelow) && monitor.violations.length < 20) {
+              monitor.violations.push({
+                at: Math.round(performance.now()),
+                overlaps,
+                anchorBelow,
+                button: {
+                  left: Math.round(buttonRect.left), top: Math.round(buttonRect.top),
+                  right: Math.round(buttonRect.right), bottom: Math.round(buttonRect.bottom),
+                },
+                player: {
+                  left: Math.round(playerRect.left), top: Math.round(playerRect.top),
+                  right: Math.round(playerRect.right), bottom: Math.round(playerRect.bottom),
+                },
+              });
+            }
+          }
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    })();
+  `;
+  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: layoutMonitorSource,
+  });
+
   if (injectLocalScript) {
+    const stateFailureShim = probeStateFailure
+      ? `
+        globalThis.__qfavFailFavoriteState = true;
+        globalThis.__qfavNativeFetch = globalThis.fetch.bind(globalThis);
+        globalThis.fetch = (...args) => {
+          const url = String(args[0]?.url || args[0] || "");
+          if (globalThis.__qfavFailFavoriteState && url.includes("/x/v2/fav/video/favoured")) {
+            return Promise.resolve(new Response("", { status: 503 }));
+          }
+          return globalThis.__qfavNativeFetch(...args);
+        };
+      `
+      : "";
     const gmTestShim = `
       globalThis.__qfavTestValues = Object.create(null);
       globalThis.GM_getValue = (key, fallback) =>
@@ -128,7 +310,7 @@ async function main() {
         globalThis.__qfavTestValues[key] = value;
       };
     `;
-    const source = `${gmTestShim}\n${fs.readFileSync(userscriptPath, "utf8")}`;
+    const source = `${stateFailureShim}\n${gmTestShim}\n${fs.readFileSync(userscriptPath, "utf8")}`;
     await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source });
   }
 
@@ -280,6 +462,63 @@ async function main() {
   }
 
   let manualRateTest = { tested: false };
+
+  let viewportLayoutTest = { tested: false };
+  if (probeLayoutTimeline) {
+    const sizes = [
+      { width: 800, height: 600 },
+      { width: 1280, height: 720 },
+      { width: 1440, height: 879 },
+      { width: 1920, height: 936 },
+    ];
+    const entries = [];
+    for (const size of sizes) {
+      await cdp.send("Emulation.setDeviceMetricsOverride", {
+        width: size.width,
+        height: size.height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await wait(1400);
+      const probe = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `(() => {
+          const root = document.querySelector("#qfav-overlay-host")?.shadowRoot;
+          const button = root?.querySelector(".qfav-detail-btn");
+          const player =
+            document.querySelector("#bilibili-player") ||
+            document.querySelector(".bpx-player-container");
+          const anchor = button?.qfavTarget;
+          if (!button || !player || !anchor) return null;
+          const buttonRect = button.getBoundingClientRect();
+          const playerRect = player.getBoundingClientRect();
+          const anchorRect = anchor.getBoundingClientRect();
+          const visible = getComputedStyle(button).visibility === "visible";
+          const overlaps = !(
+            buttonRect.bottom <= playerRect.top ||
+            buttonRect.top >= playerRect.bottom ||
+            buttonRect.right <= playerRect.left ||
+            buttonRect.left >= playerRect.right
+          );
+          return {
+            visible,
+            overlaps,
+            anchorBelow: anchorRect.top >= playerRect.bottom,
+            detailCount: root.querySelectorAll(".qfav-detail-btn").length,
+          };
+        })()`,
+      });
+      entries.push({ ...size, state: probe.result?.result?.value || null });
+    }
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: 1440,
+      height: 879,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await wait(1400);
+    viewportLayoutTest = { tested: true, entries };
+  }
 
   let fullscreenTest = { tested: false };
   if (probeFullscreen) {
@@ -702,6 +941,7 @@ async function main() {
         const waitLayout = () => new Promise((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(resolve))
         );
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         const originalStyle = anchor.getAttribute("style");
         const originalRect = anchor.getBoundingClientRect();
         const deltaY = innerHeight - 10 - originalRect.top;
@@ -716,17 +956,33 @@ async function main() {
           document.querySelector(".bpx-player-container");
         const playerRect = player?.getBoundingClientRect();
         let overlappingVisibility = null;
+        let animatedVisibleOverlaps = 0;
         if (playerRect?.height > 80) {
           const overlapY = playerRect.top + Math.min(80, playerRect.height / 2);
+          anchor.style.transition = "transform 300ms linear";
           anchor.style.transform = "translateY(" + (overlapY - originalRect.top) + "px)";
           window.dispatchEvent(new Event("resize"));
-          await waitLayout();
+          for (let index = 0; index < 10; index++) {
+            await sleep(50);
+            const buttonRect = button.getBoundingClientRect();
+            const currentPlayerRect = player.getBoundingClientRect();
+            const overlaps = !(
+              buttonRect.bottom <= currentPlayerRect.top ||
+              buttonRect.top >= currentPlayerRect.bottom ||
+              buttonRect.right <= currentPlayerRect.left ||
+              buttonRect.left >= currentPlayerRect.right
+            );
+            if (getComputedStyle(button).visibility === "visible" && overlaps) {
+              animatedVisibleOverlaps += 1;
+            }
+          }
           overlappingVisibility = getComputedStyle(button).visibility;
         }
 
         if (originalStyle === null) anchor.removeAttribute("style");
         else anchor.setAttribute("style", originalStyle);
         window.dispatchEvent(new Event("resize"));
+        await sleep(1350);
         await waitLayout();
         return {
           tested: true,
@@ -735,6 +991,7 @@ async function main() {
           viewportHeight: innerHeight,
           shiftedVisibility,
           overlappingVisibility,
+          animatedVisibleOverlaps,
           restoredVisibility: getComputedStyle(button).visibility,
         };
       })()`,
@@ -742,6 +999,50 @@ async function main() {
     detailEdgeTest = edgeResult.result?.result?.value || {
       tested: false,
       error: "detail edge test returned no value",
+    };
+  }
+
+  let stateFailureTest = { tested: false };
+  if (probeStateFailure) {
+    const beforeResult = await cdp.send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const button = document.querySelector("#qfav-overlay-host")?.shadowRoot
+          ?.querySelector(".qfav-detail-btn");
+        if (!button) return null;
+        return {
+          ready: button.dataset.qfavStateReady || null,
+          pending: button.classList.contains("qfav-state-pending"),
+          visibility: getComputedStyle(button).visibility,
+        };
+      })()`,
+    });
+    await cdp.send("Runtime.evaluate", {
+      expression: `(() => {
+        globalThis.__qfavFailFavoriteState = false;
+        const button = document.querySelector("#qfav-overlay-host")?.shadowRoot
+          ?.querySelector(".qfav-detail-btn");
+        button?.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+      })()`,
+    });
+    await wait(1600);
+    const afterResult = await cdp.send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const button = document.querySelector("#qfav-overlay-host")?.shadowRoot
+          ?.querySelector(".qfav-detail-btn");
+        if (!button) return null;
+        return {
+          ready: button.dataset.qfavStateReady || null,
+          pending: button.classList.contains("qfav-state-pending"),
+          visibility: getComputedStyle(button).visibility,
+        };
+      })()`,
+    });
+    stateFailureTest = {
+      tested: true,
+      before: beforeResult.result?.result?.value || null,
+      after: afterResult.result?.result?.value || null,
     };
   }
 
@@ -816,7 +1117,10 @@ async function main() {
           queryNoise: ${JSON.stringify(queryNoiseResult.result?.result?.value || null)},
           semanticRouteTest: ${JSON.stringify(semanticRouteTest)},
           liveFavoriteTest: ${JSON.stringify(liveFavoriteTest)},
+          stateFailureTest: ${JSON.stringify(stateFailureTest)},
           detailEdgeTest: ${JSON.stringify(detailEdgeTest)},
+          viewportLayoutTest: ${JSON.stringify(viewportLayoutTest)},
+          layoutTimeline: globalThis.__qfavLayoutMonitor || null,
           coverHover: ${JSON.stringify(coverHover)},
           pageHeader: inspectVisibility(pageHeader),
           playerTop: inspectVisibility(playerTop),
@@ -830,6 +1134,8 @@ async function main() {
                 ready: detailButton.dataset.qfavStateReady || null,
                 fill: detailIcon?.getAttribute("fill") || null,
                 stroke: detailIcon?.getAttribute("stroke") || null,
+                visibility: getComputedStyle(detailButton).visibility,
+                count: qfavRoot.querySelectorAll(".qfav-detail-btn").length,
               }
             : null,
         };
@@ -837,7 +1143,8 @@ async function main() {
     )()`,
   });
 
-  console.log(JSON.stringify(result.result.result.value, null, 2));
+  const output = result.result.result.value;
+  console.log(JSON.stringify(output, null, 2));
 
   if (screenshotPath) {
     const screenshot = await cdp.send("Page.captureScreenshot", {
@@ -849,6 +1156,11 @@ async function main() {
 
   await cdp.send("Target.closeTarget", { targetId: target.id }).catch(() => {});
   cdp.close();
+
+  const failures = collectAssertionFailures(output);
+  if (failures.length > 0) {
+    throw new Error(`Regression assertions failed:\n- ${failures.join("\n- ")}`);
+  }
 }
 
 main().catch((error) => {

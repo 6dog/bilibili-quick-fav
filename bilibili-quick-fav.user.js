@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.72
+// @version      1.73
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -28,6 +28,11 @@
   const FAVORITES_SCAN_THROTTLE_MS = 80;
   const FAVORITES_EXTRA_SCAN_DELAYS = [2000, 5000, 8000];
   const HEADER_MOUNT_RETRY_MS = 100;
+  const HEADER_READY_TIMEOUT_MS = 5000;
+  const API_TIMEOUT_MS = 8000;
+  const LAYOUT_TRACK_MS = 1200;
+  const LAYOUT_MIN_SETTLE_MS = 350;
+  const LAYOUT_STABLE_FRAMES = 4;
 
   // ===== 收藏状态缓存 =====
   const favCache = new Map();
@@ -36,6 +41,8 @@
   const coverStateLoaders = new WeakMap();
   let uidPromise = null;
   let folderPickerPromise = null;
+  let cancelFolderPicker = null;
+  let knownFolderIds = null;
   let coverStateObserver = null;
   let coverResizeObserver = null;
   let overlayHost = null;
@@ -44,6 +51,14 @@
   let detailRecord = null;
   let activeCoverRecord = null;
   let layoutFrame = 0;
+  let layoutTrackUntil = 0;
+  let layoutShowAfter = 0;
+  let layoutStableFrames = 0;
+  let lastLayoutSignature = "";
+  let detailResizeObserver = null;
+  let layoutAttributeObserver = null;
+  let observedPlayer = null;
+  let observedDetailAnchor = null;
   let routeGeneration = 0;
   const coverRecords = new Map();
   const buttonRecords = new Map();
@@ -59,15 +74,26 @@
   }
 
   async function apiFetch(url, options = {}) {
-    const resp = await fetch(url, {
-      credentials: "include",
-      ...options,
-    });
-    if (!resp.ok) return { code: -1, message: `HTTP ${resp.status}` };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
     try {
+      const resp = await fetch(url, {
+        credentials: "include",
+        ...options,
+        signal: controller.signal,
+      });
+      if (!resp.ok) return { code: -1, message: `HTTP ${resp.status}` };
       return await resp.json();
-    } catch {
-      return { code: -1, message: "invalid JSON response" };
+    } catch (error) {
+      return {
+        code: -1,
+        message:
+          error?.name === "AbortError"
+            ? "request timeout"
+            : "network or invalid JSON response",
+      };
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -251,6 +277,7 @@
 
   function showFolderPicker(folders) {
     return new Promise((resolve) => {
+      let settled = false;
       const overlay = document.createElement("div");
       Object.assign(overlay.style, {
         position: "fixed",
@@ -266,6 +293,9 @@
       });
 
       const modal = document.createElement("div");
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.setAttribute("aria-label", "选择快捷收藏夹");
       Object.assign(modal.style, {
         background: "#fff",
         borderRadius: "12px",
@@ -296,17 +326,36 @@
       });
       modal.appendChild(hint);
 
-      folders.forEach((folder) => {
-        const btn = document.createElement("div");
+      const close = (folderId = null) => {
+        if (settled) return;
+        settled = true;
+        document.removeEventListener("keydown", onKeyDown, true);
+        overlay.remove();
+        if (cancelFolderPicker === close) cancelFolderPicker = null;
+        resolve(folderId);
+      };
+      const onKeyDown = (event) => {
+        if (event.key === "Escape") close();
+      };
+      cancelFolderPicker = close;
+      document.addEventListener("keydown", onKeyDown, true);
+
+      folders.forEach((folder, index) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
         btn.textContent = `${folder.title}（${folder.media_count} 个视频）`;
         Object.assign(btn.style, {
+          display: "block",
+          width: "100%",
           padding: "12px 16px",
           margin: "0 0 8px 0",
+          border: "0",
           borderRadius: "8px",
           cursor: "pointer",
           background: "#f5f5f5",
           fontSize: "14px",
           color: "#333",
+          textAlign: "left",
           transition: "background 0.2s",
         });
         btn.addEventListener("mouseenter", () => {
@@ -319,16 +368,16 @@
         });
         btn.addEventListener("click", () => {
           GM_setValue(FAV_FOLDER_KEY, folder.id);
-          overlay.remove();
-          resolve(folder.id);
+          knownFolderIds?.add(String(folder.id));
+          close(folder.id);
         });
         modal.appendChild(btn);
+        if (index === 0) setTimeout(() => btn.focus(), 0);
       });
 
       overlay.addEventListener("click", (e) => {
         if (e.target === overlay) {
-          overlay.remove();
-          resolve(null);
+          close();
         }
       });
 
@@ -339,7 +388,15 @@
 
   async function ensureFolderId() {
     let folderId = GM_getValue(FAV_FOLDER_KEY, null);
-    if (folderId) return folderId;
+    if (folderId) {
+      if (knownFolderIds?.has(String(folderId))) return folderId;
+      const uid = await getUid();
+      const folders = await getFavFolders(uid);
+      knownFolderIds = new Set(folders.map((folder) => String(folder.id)));
+      if (knownFolderIds.has(String(folderId))) return folderId;
+      GM_setValue(FAV_FOLDER_KEY, null);
+      folderId = null;
+    }
 
     // 并发调用时复用同一个 picker，避免打开多个弹窗
     if (folderPickerPromise) return folderPickerPromise;
@@ -348,6 +405,7 @@
       try {
         const uid = await getUid();
         const folders = await getFavFolders(uid);
+        knownFolderIds = new Set(folders.map((folder) => String(folder.id)));
         if (folders.length === 0) {
           alert("你还没有收藏夹，请先在 B 站创建一个收藏夹。");
           return null;
@@ -399,6 +457,7 @@
     button.dataset.qfavIconSize = String(size);
     button.qfavTarget = target;
     renderFavoriteButton(button, filled);
+    button.classList.add("qfav-state-pending");
     return button;
   }
 
@@ -406,7 +465,11 @@
     favCache.set(aid, faved);
     overlayRoot
       ?.querySelectorAll(`[data-qfav-aid="${aid}"]`)
-      .forEach((button) => renderFavoriteButton(button, faved));
+      .forEach((button) => {
+        renderFavoriteButton(button, faved);
+        button.dataset.qfavStateReady = "1";
+      });
+    scheduleOverlayLayout();
   }
 
   function isFavoritesCollectionPage() {
@@ -573,11 +636,36 @@
         visibility: hidden;
         pointer-events: none;
       }
+      .qfav-notice {
+        position: fixed;
+        left: 50%;
+        top: 72px;
+        transform: translateX(-50%);
+        max-width: min(420px, calc(100vw - 32px));
+        padding: 10px 14px;
+        border-radius: 8px;
+        color: #fff;
+        background: rgba(24, 25, 28, 0.92);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.22);
+        font-size: 14px;
+        line-height: 20px;
+        z-index: 20000;
+      }
     `;
     overlayLayer = document.createElement("div");
     overlayLayer.className = "qfav-layer";
     overlayRoot.append(style, overlayLayer);
     return overlayRoot;
+  }
+
+  function showNotice(message) {
+    ensureOverlayRoot();
+    overlayLayer.querySelector(".qfav-notice")?.remove();
+    const notice = document.createElement("div");
+    notice.className = "qfav-notice";
+    notice.textContent = message;
+    overlayLayer.appendChild(notice);
+    setTimeout(() => notice.remove(), 2600);
   }
 
   // ===== 收藏切换逻辑 =====
@@ -625,11 +713,14 @@
           return confirmedVisualFaved;
         } else {
           console.error("[B站一键收藏] 操作失败:", result.message);
+          knownFolderIds = null;
+          showNotice(`收藏操作失败：${result.message || "请稍后重试"}`);
           syncFavVisualState(aid, previousVisualFaved);
           return previousVisualFaved;
         }
       } catch (e) {
         console.error("[B站一键收藏] 错误:", e);
+        showNotice("收藏操作失败，请检查登录状态或网络后重试");
         syncFavVisualState(aid, previousVisualFaved);
         return previousVisualFaved;
       } finally {
@@ -653,12 +744,14 @@
     bvid,
     generation,
     isValid,
-    fallbackState = () => false,
+    fallbackState = () => null,
   }) {
     let pending = null;
 
     return async () => {
-      if (button.dataset.qfavStateReady === "1") return;
+      if (button.dataset.qfavStateReady === "1") {
+        return button.classList.contains("qfav-active");
+      }
       if (pending) return pending;
 
       pending = (async () => {
@@ -679,14 +772,25 @@
               return;
             }
             faved = apiState ?? fallbackState();
+            if (typeof faved !== "boolean") return null;
+            if (apiState === null) {
+              renderFavoriteButton(button, faved);
+              button.classList.add("qfav-state-pending");
+              return null;
+            }
             syncFavVisualState(aid, faved);
           } else {
             renderFavoriteButton(button, faved);
+            button.dataset.qfavStateReady = "1";
           }
-          button.dataset.qfavStateReady = "1";
+          return faved;
         } catch (_) {
-          renderFavoriteButton(button, fallbackState());
-          button.dataset.qfavStateReady = "1";
+          const fallback = fallbackState();
+          if (typeof fallback === "boolean") {
+            renderFavoriteButton(button, fallback);
+            button.classList.add("qfav-state-pending");
+          }
+          return null;
         } finally {
           pending = null;
         }
@@ -706,8 +810,12 @@
       async (event) => {
         stopButtonEvent(event);
         try {
-          await loadState();
+          const confirmedState = await loadState();
           if (generation !== routeGeneration || !button.isConnected) return;
+          if (typeof confirmedState !== "boolean") {
+            showNotice("暂时无法确认收藏状态，请稍后重试");
+            return;
+          }
           const aid = await getAid(bvid);
           if (!aid || generation !== routeGeneration) return;
           button.dataset.qfavAid = String(aid);
@@ -781,6 +889,7 @@
     });
     if (onFavoritesPage) {
       btn.dataset.qfavStateReady = "1";
+      btn.classList.remove("qfav-state-pending");
     }
 
     const record = {
@@ -871,24 +980,23 @@
     const x = Math.round(rect.right + 12);
     const y = Math.round(rect.top + (rect.height - 28) / 2);
     const playerRect = getPlayerElement()?.getBoundingClientRect();
-    const outsidePlayer =
-      !playerRect ||
-      playerRect.width <= 0 ||
-      playerRect.height <= 0 ||
-      y >= playerRect.bottom ||
-      y + 28 <= playerRect.top ||
-      x >= playerRect.right ||
-      x + 28 <= playerRect.left;
+    const toolbarBelowPlayer =
+      playerRect?.width > 0 &&
+      playerRect?.height > 0 &&
+      rect.top >= playerRect.bottom &&
+      y >= playerRect.bottom;
     const visible =
       generation === routeGeneration &&
       anchor.isConnected &&
+      button.dataset.qfavStateReady === "1" &&
+      !button.classList.contains("qfav-state-pending") &&
       rect.width > 0 &&
       rect.height > 0 &&
       x >= 0 &&
       y >= 0 &&
       x + 28 <= innerWidth &&
       y + 28 <= innerHeight &&
-      outsidePlayer;
+      toolbarBelowPlayer;
     button.style.visibility = visible ? "visible" : "hidden";
     if (!visible) return;
     button.style.left = `${x}px`;
@@ -901,6 +1009,69 @@
       document.querySelector(".bpx-player-container") ||
       document.querySelector(".bilibili-player-video")
     );
+  }
+
+  function getLayoutSignature() {
+    const playerRect = getPlayerElement()?.getBoundingClientRect();
+    const anchorRect = detailRecord?.anchor?.getBoundingClientRect();
+    const rectKey = (rect) =>
+      rect
+        ? [rect.left, rect.top, rect.right, rect.bottom]
+            .map((value) => Math.round(value * 2) / 2)
+            .join(",")
+        : "missing";
+    return [
+      innerWidth,
+      innerHeight,
+      rectKey(playerRect),
+      rectKey(anchorRect),
+      document.body.className,
+      document.fullscreenElement ? "fullscreen" : "windowed",
+    ].join("|");
+  }
+
+  function hideDetailButtonImmediately() {
+    if (detailRecord?.button) {
+      detailRecord.button.style.visibility = "hidden";
+    }
+  }
+
+  function beginLayoutStabilization() {
+    const now = performance.now();
+    layoutTrackUntil = now + LAYOUT_TRACK_MS;
+    layoutShowAfter = now + LAYOUT_MIN_SETTLE_MS;
+    layoutStableFrames = 0;
+    lastLayoutSignature = "";
+    hideDetailButtonImmediately();
+    scheduleOverlayLayout();
+  }
+
+  function refreshDetailLayoutObservers() {
+    const player = getPlayerElement();
+    const anchor = detailRecord?.anchor || null;
+    if (player === observedPlayer && anchor === observedDetailAnchor) {
+      return false;
+    }
+    observedPlayer = player;
+    observedDetailAnchor = anchor;
+    detailResizeObserver?.disconnect();
+    layoutAttributeObserver?.disconnect();
+
+    if (detailResizeObserver) {
+      if (player) detailResizeObserver.observe(player);
+      if (anchor) detailResizeObserver.observe(anchor);
+    }
+    if (layoutAttributeObserver) {
+      [document.documentElement, document.body, player, anchor]
+        .filter((element, index, items) => element && items.indexOf(element) === index)
+        .forEach((element) =>
+          layoutAttributeObserver.observe(element, {
+            attributes: true,
+            attributeFilter: ["class", "style"],
+          }),
+        );
+    }
+    return true;
   }
 
   function isPlayerFullscreenMode() {
@@ -933,15 +1104,35 @@
 
   function updateOverlayLayout() {
     layoutFrame = 0;
+    const now = performance.now();
+    const trackingLayout = now < layoutTrackUntil;
+    if (trackingLayout) {
+      const signature = getLayoutSignature();
+      if (signature === lastLayoutSignature) layoutStableFrames += 1;
+      else {
+        lastLayoutSignature = signature;
+        layoutStableFrames = 0;
+      }
+    }
     const hideForFullscreen = isPlayerFullscreenMode();
     overlayHost.dataset.qfavPlayerFullscreen = hideForFullscreen ? "1" : "0";
     overlayLayer.style.visibility = hideForFullscreen ? "hidden" : "visible";
     if (hideForFullscreen) {
+      hideDetailButtonImmediately();
       setActiveCoverRecord(null);
+      if (trackingLayout) scheduleOverlayLayout();
       return;
     }
     coverRecords.forEach(positionCoverRecord);
-    positionDetailRecord();
+    if (
+      !trackingLayout ||
+      (now >= layoutShowAfter && layoutStableFrames >= LAYOUT_STABLE_FRAMES)
+    ) {
+      positionDetailRecord();
+    } else {
+      hideDetailButtonImmediately();
+    }
+    if (trackingLayout) scheduleOverlayLayout();
   }
 
   function scheduleOverlayLayout() {
@@ -988,10 +1179,13 @@
     return !(header.innerText || "").trim();
   }
 
-  function runWhenBiliHeaderReady(callback) {
-    if (isBiliHeaderMountPending()) {
+  function runWhenBiliHeaderReady(
+    callback,
+    deadline = Date.now() + HEADER_READY_TIMEOUT_MS,
+  ) {
+    if (isBiliHeaderMountPending() && Date.now() < deadline) {
       setTimeout(
-        () => runWhenBiliHeaderReady(callback),
+        () => runWhenBiliHeaderReady(callback, deadline),
         HEADER_MOUNT_RETRY_MS,
       );
       return;
@@ -1097,6 +1291,7 @@
     if (!detailRecord) return;
     detailRecord.button.remove();
     detailRecord = null;
+    refreshDetailLayoutObservers();
   }
 
   function injectDetailButton() {
@@ -1116,7 +1311,8 @@
       detailRecord.anchor === mount &&
       detailRecord.generation === routeGeneration
     ) {
-      scheduleOverlayLayout();
+      if (refreshDetailLayoutObservers()) beginLayoutStabilization();
+      else scheduleOverlayLayout();
       return;
     }
     removeDetailButton();
@@ -1146,12 +1342,13 @@
 
     overlayLayer.appendChild(btn);
     detailRecord = { anchor: mount, bvid, button: btn, generation };
+    refreshDetailLayoutObservers();
     void loadState();
     btn.addEventListener("pointerenter", loadState, {
       passive: true,
     });
     btn.addEventListener("focusin", loadState);
-    scheduleOverlayLayout();
+    beginLayoutStabilization();
   }
 
   // ===== 默认播放倍速 =====
@@ -1502,27 +1699,52 @@
 
   function startObserver() {
     const runDomScan = () => {
-      // 视频页仍等顶部栏完成初次挂载，但所有收藏控件只写入隔离浮层。
-      if (isBiliHeaderMountPending()) return;
       scanVideoCards();
       injectDetailButton();
       scanVideos();
     };
 
     let scanTimer = null;
+    let contentScanPending = false;
+    let videoScanPending = false;
+    const flushScan = () => {
+      scanTimer = null;
+      const guardRemaining = navGuardUntil - Date.now();
+      if (guardRemaining > 0) {
+        scanTimer = setTimeout(flushScan, guardRemaining);
+        return;
+      }
+      if (contentScanPending) runDomScan();
+      else if (videoScanPending) scanVideos();
+      contentScanPending = false;
+      videoScanPending = false;
+    };
 
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((records) => {
+      const player = getPlayerElement();
+      records.forEach((record) => {
+        const target = record.target instanceof Element ? record.target : null;
+        if (target && overlayHost?.contains(target)) return;
+
+        if (player && target && player.contains(target)) {
+          const videoChanged = [...record.addedNodes, ...record.removedNodes].some(
+            (node) =>
+              node instanceof Element &&
+              (node.matches("video") || node.querySelector("video")),
+          );
+          videoScanPending ||= videoChanged;
+          return;
+        }
+        contentScanPending = true;
+      });
+      if (!contentScanPending && !videoScanPending) return;
+
       // 收藏夹页面内容是异步瀑布流，低频补扫即可，避免错过晚加载的卡片
       if (scanTimer) return;
       const throttle = isSpaceFavoritesPage()
         ? FAVORITES_SCAN_THROTTLE_MS
         : DOM_SCAN_THROTTLE_MS;
-      scanTimer = setTimeout(() => {
-        scanTimer = null;
-        // SPA 导航保护期内跳过，避免在 Vue 挂载过程中干扰渲染
-        if (Date.now() < navGuardUntil) return;
-        runDomScan();
-      }, throttle);
+      scanTimer = setTimeout(flushScan, throttle);
     });
 
     observer.observe(document.body, {
@@ -1553,11 +1775,13 @@
         lastRouteKey = nextRouteKey;
         routeGeneration += 1;
         favCache.clear();
+        cancelFolderPicker?.();
         removeAllOverlayButtons();
         const scanDelay = getScanDelay();
         navGuardUntil = Date.now() + scanDelay; // 保护期：屏蔽 Observer 在挂载窗口内的扫描
         stopFastRateBootstrap();
         startFastRateBootstrap();
+        beginLayoutStabilization();
         // 只有视频/分P/收藏夹等语义路由变化才重置；vd_source 等参数被忽略。
         setTimeout(() => runWhenBiliHeaderReady(() => {
           scanVideoCards();
@@ -1578,7 +1802,10 @@
     ensureOverlayRoot();
     if ("ResizeObserver" in window) {
       coverResizeObserver = new ResizeObserver(scheduleOverlayLayout);
+      detailResizeObserver = new ResizeObserver(beginLayoutStabilization);
     }
+    layoutAttributeObserver = new MutationObserver(beginLayoutStabilization);
+    refreshDetailLayoutObservers();
 
     document.addEventListener(
       "pointermove",
@@ -1591,13 +1818,37 @@
       true,
     );
     window.addEventListener("blur", () => setActiveCoverRecord(null));
-    window.addEventListener("scroll", scheduleOverlayLayout, {
+    window.addEventListener("scroll", beginLayoutStabilization, {
       capture: true,
       passive: true,
     });
-    window.addEventListener("resize", scheduleOverlayLayout, { passive: true });
-    document.addEventListener("fullscreenchange", scheduleOverlayLayout);
-    document.addEventListener("webkitfullscreenchange", scheduleOverlayLayout);
+    window.addEventListener("resize", beginLayoutStabilization, { passive: true });
+    window.visualViewport?.addEventListener("resize", beginLayoutStabilization, {
+      passive: true,
+    });
+    window.visualViewport?.addEventListener("scroll", beginLayoutStabilization, {
+      passive: true,
+    });
+    document.addEventListener("fullscreenchange", beginLayoutStabilization);
+    document.addEventListener("webkitfullscreenchange", beginLayoutStabilization);
+    ["transitionrun", "transitionstart", "animationstart"].forEach(
+      (eventName) =>
+        document.addEventListener(
+          eventName,
+          (event) => {
+            const player = getPlayerElement();
+            if (
+              event.target === player ||
+              event.target === detailRecord?.anchor ||
+              event.target === document.body ||
+              event.target === document.documentElement
+            ) {
+              beginLayoutStabilization();
+            }
+          },
+          true,
+        ),
+    );
   }
 
   function bootstrapDomFeatures() {

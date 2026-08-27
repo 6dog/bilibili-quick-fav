@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.70-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.73-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -40,6 +40,12 @@ v1.69 修复详情收藏按钮的边缘夹取：工具栏滑出视口或切换�
 
 v1.70 合并封面与详情收藏按钮的状态加载、点击和图标更新流程，精简重复样式、
 页面扫描与浏览器回归输出；功能与页面行为保持不变。
+
+v1.71–v1.72 补充网页宽屏识别，并禁止详情收藏按钮与播放器画面重叠。
+
+v1.73 改为严格失败关闭：详情按钮只允许出现在播放器下方的有效工具栏旁；布局
+变化时先隐藏并持续跟踪到稳定。同步修复收藏状态误确认、请求超时、顶部栏等待、
+高频播放器 DOM 扫描和测试未强制失败的问题。
 
 自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
 你的浏览器。
@@ -94,9 +100,11 @@ scripts/check-test-browser.js
 # 注入当前工作区脚本，检查 Shadow DOM、顶部栏和悬停显示
 scripts/check-test-browser.js --inject-local-script
 
-# 可选：检查语义路由和用户手动改速；真实收藏测试会自动恢复原状态
-scripts/check-test-browser.js --inject-local-script --probe-semantic-route
-scripts/check-test-browser.js --inject-local-script --probe-manual-rate
+# 可选：检查布局全过程、语义路由和用户手动改速
+scripts/check-test-browser.js --inject-local-script --probe-layout-timeline --probe-detail-edge --probe-fullscreen
+scripts/check-test-browser.js --inject-local-script --probe-semantic-route --probe-manual-rate
+
+# 会真实切换收藏并恢复测试前的全部收藏夹状态，仅在明确授权后执行
 scripts/check-test-browser.js --inject-local-script --toggle-detail-favorite
 ```
 
@@ -110,11 +118,8 @@ scripts/check-test-browser.js --inject-local-script --toggle-detail-favorite
 
 **想重新选择快捷收藏夹**
 
-清空脚本存储，或在控制台执行：
-
-```js
-GM_deleteValue("qfav_folder_id");
-```
+在 Tampermonkey 管理面板打开本脚本的“存储”页，删除 `qfav_folder_id`；下次点击
+快捷收藏时会重新弹出收藏夹选择窗口。
 
 **不想启用默认倍速**
 
@@ -123,7 +128,7 @@ GM_deleteValue("qfav_folder_id");
 ## 说明
 
 - 请求只会发往 `api.bilibili.com`
-- 本地只保存快捷收藏夹 ID 和名称
+- 本地只保存快捷收藏夹 ID
 - 单文件脚本，无构建步骤
 
 ## 反馈
