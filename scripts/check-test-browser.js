@@ -710,6 +710,20 @@ async function main() {
         await waitLayout();
         const shiftedRect = anchor.getBoundingClientRect();
         const shiftedVisibility = getComputedStyle(button).visibility;
+
+        const player =
+          document.querySelector("#bilibili-player") ||
+          document.querySelector(".bpx-player-container");
+        const playerRect = player?.getBoundingClientRect();
+        let overlappingVisibility = null;
+        if (playerRect?.height > 80) {
+          const overlapY = playerRect.top + Math.min(80, playerRect.height / 2);
+          anchor.style.transform = "translateY(" + (overlapY - originalRect.top) + "px)";
+          window.dispatchEvent(new Event("resize"));
+          await waitLayout();
+          overlappingVisibility = getComputedStyle(button).visibility;
+        }
+
         if (originalStyle === null) anchor.removeAttribute("style");
         else anchor.setAttribute("style", originalStyle);
         window.dispatchEvent(new Event("resize"));
@@ -720,6 +734,7 @@ async function main() {
           shiftedAnchorBottom: Math.round(shiftedRect.bottom),
           viewportHeight: innerHeight,
           shiftedVisibility,
+          overlappingVisibility,
           restoredVisibility: getComputedStyle(button).visibility,
         };
       })()`,

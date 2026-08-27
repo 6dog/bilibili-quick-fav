@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.71
+// @version      1.72
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -557,6 +557,7 @@
         line-height: 28px !important;
         pointer-events: auto;
         z-index: 1;
+        visibility: hidden;
       }
       .qfav-detail-btn:hover {
         transform: scale(1.1);
@@ -869,6 +870,15 @@
     const rect = anchor.getBoundingClientRect();
     const x = Math.round(rect.right + 12);
     const y = Math.round(rect.top + (rect.height - 28) / 2);
+    const playerRect = getPlayerElement()?.getBoundingClientRect();
+    const outsidePlayer =
+      !playerRect ||
+      playerRect.width <= 0 ||
+      playerRect.height <= 0 ||
+      y >= playerRect.bottom ||
+      y + 28 <= playerRect.top ||
+      x >= playerRect.right ||
+      x + 28 <= playerRect.left;
     const visible =
       generation === routeGeneration &&
       anchor.isConnected &&
@@ -877,11 +887,20 @@
       x >= 0 &&
       y >= 0 &&
       x + 28 <= innerWidth &&
-      y + 28 <= innerHeight;
+      y + 28 <= innerHeight &&
+      outsidePlayer;
     button.style.visibility = visible ? "visible" : "hidden";
     if (!visible) return;
     button.style.left = `${x}px`;
     button.style.top = `${y}px`;
+  }
+
+  function getPlayerElement() {
+    return (
+      document.querySelector("#bilibili-player") ||
+      document.querySelector(".bpx-player-container") ||
+      document.querySelector(".bilibili-player-video")
+    );
   }
 
   function isPlayerFullscreenMode() {
@@ -889,10 +908,7 @@
       return true;
     }
 
-    const player =
-      document.querySelector("#bilibili-player") ||
-      document.querySelector(".bpx-player-container") ||
-      document.querySelector(".bilibili-player-video");
+    const player = getPlayerElement();
     if (!player) return false;
 
     // B 站“宽屏/网页全屏”不一定触发 Fullscreen API，播放器会通过
