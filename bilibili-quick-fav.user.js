@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.73
+// @version      1.74
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -54,6 +54,7 @@
   let layoutTrackUntil = 0;
   let layoutShowAfter = 0;
   let layoutStableFrames = 0;
+  let layoutReadyToShow = false;
   let lastLayoutSignature = "";
   let detailResizeObserver = null;
   let layoutAttributeObserver = null;
@@ -1041,6 +1042,7 @@
     layoutTrackUntil = now + LAYOUT_TRACK_MS;
     layoutShowAfter = now + LAYOUT_MIN_SETTLE_MS;
     layoutStableFrames = 0;
+    layoutReadyToShow = false;
     lastLayoutSignature = "";
     hideDetailButtonImmediately();
     scheduleOverlayLayout();
@@ -1126,8 +1128,10 @@
     coverRecords.forEach(positionCoverRecord);
     if (
       !trackingLayout ||
+      layoutReadyToShow ||
       (now >= layoutShowAfter && layoutStableFrames >= LAYOUT_STABLE_FRAMES)
     ) {
+      layoutReadyToShow = true;
       positionDetailRecord();
     } else {
       hideDetailButtonImmediately();
@@ -1818,7 +1822,7 @@
       true,
     );
     window.addEventListener("blur", () => setActiveCoverRecord(null));
-    window.addEventListener("scroll", beginLayoutStabilization, {
+    window.addEventListener("scroll", scheduleOverlayLayout, {
       capture: true,
       passive: true,
     });
@@ -1826,7 +1830,7 @@
     window.visualViewport?.addEventListener("resize", beginLayoutStabilization, {
       passive: true,
     });
-    window.visualViewport?.addEventListener("scroll", beginLayoutStabilization, {
+    window.visualViewport?.addEventListener("scroll", scheduleOverlayLayout, {
       passive: true,
     });
     document.addEventListener("fullscreenchange", beginLayoutStabilization);

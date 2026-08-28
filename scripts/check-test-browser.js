@@ -164,6 +164,18 @@ function collectAssertionFailures(result) {
 
   if (probeDetailEdge) {
     expect(result.detailEdgeTest?.tested, "detail edge probe did not run");
+    expect(
+      result.detailEdgeTest?.initialVisibility === "visible",
+      "detail was not visible before scroll probe",
+    );
+    expect(
+      result.detailEdgeTest?.scrollVisibility === "visible",
+      "onscreen detail disappeared during scroll",
+    );
+    expect(
+      result.detailEdgeTest?.scrollAlignmentDelta <= 2,
+      "detail did not track its anchor during scroll",
+    );
     expect(result.detailEdgeTest?.shiftedVisibility === "hidden", "offscreen detail remained visible");
     expect(result.detailEdgeTest?.overlappingVisibility === "hidden", "overlapping detail remained visible");
     expect(result.detailEdgeTest?.animatedVisibleOverlaps === 0, "detail flashed during layout animation");
@@ -952,7 +964,27 @@ async function main() {
           requestAnimationFrame(() => requestAnimationFrame(resolve))
         );
         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        for (let attempt = 0; attempt < 40; attempt++) {
+          if (getComputedStyle(button).visibility === "visible") break;
+          await sleep(50);
+        }
+        const initialVisibility = getComputedStyle(button).visibility;
         const originalStyle = anchor.getAttribute("style");
+        const originalScrollY = scrollY;
+        window.scrollTo(0, originalScrollY + 12);
+        await waitLayout();
+        const scrollAnchorRect = anchor.getBoundingClientRect();
+        const scrollButtonRect = button.getBoundingClientRect();
+        const scrollVisibility = getComputedStyle(button).visibility;
+        const scrollAlignmentDelta = Math.max(
+          Math.abs(scrollButtonRect.left - Math.round(scrollAnchorRect.right + 12)),
+          Math.abs(
+            scrollButtonRect.top -
+              Math.round(scrollAnchorRect.top + (scrollAnchorRect.height - 28) / 2),
+          ),
+        );
+        window.scrollTo(0, originalScrollY);
+        await waitLayout();
         const originalRect = anchor.getBoundingClientRect();
         const deltaY = innerHeight - 10 - originalRect.top;
         anchor.style.transform = "translateY(" + deltaY + "px)";
@@ -996,6 +1028,9 @@ async function main() {
         await waitLayout();
         return {
           tested: true,
+          initialVisibility,
+          scrollVisibility,
+          scrollAlignmentDelta,
           shiftedAnchorTop: Math.round(shiftedRect.top),
           shiftedAnchorBottom: Math.round(shiftedRect.bottom),
           viewportHeight: innerHeight,

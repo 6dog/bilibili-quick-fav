@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.73-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.74-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -46,6 +46,9 @@ v1.71–v1.72 补充网页宽屏识别，并禁止详情收藏按钮与播放器
 v1.73 改为严格失败关闭：详情按钮只允许出现在播放器下方的有效工具栏旁；布局
 变化时先隐藏并持续跟踪到稳定。同步修复收藏状态误确认、请求超时、顶部栏等待、
 高频播放器 DOM 扫描和测试未强制失败的问题。
+
+v1.74 优化详情收藏按钮的滚动观感：按钮在工具栏仍处于安全可视区域时逐帧跟随，
+不再每次滚动都隐藏并等待；离屏、与播放器重叠或进入全屏时仍会立即隐藏。
 
 自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
 你的浏览器。
