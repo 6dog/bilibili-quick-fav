@@ -1,6 +1,6 @@
 # bilibili-quick-fav
 
-[![version](https://img.shields.io/badge/version-1.74-blue.svg)](./bilibili-quick-fav.user.js)
+[![version](https://img.shields.io/badge/version-1.75-blue.svg)](./bilibili-quick-fav.user.js)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
 给 B 站加两个顺手功能：
@@ -49,6 +49,10 @@ v1.73 改为严格失败关闭：详情按钮只允许出现在播放器下方�
 
 v1.74 优化详情收藏按钮的滚动观感：按钮在工具栏仍处于安全可视区域时逐帧跟随，
 不再每次滚动都隐藏并等待；离屏、与播放器重叠或进入全屏时仍会立即隐藏。
+
+v1.75 全面收紧封面收藏按钮的显示边界：只有鼠标位于真实视频封面时才显示，标题、
+作者和卡片空白区域不再误触发；滚动、布局变化、离开页面或切到后台时立即收起，
+加载状态也不会在离开封面后残留。详情页按钮仍保持 v1.74 的平滑滚动跟随。
 
 自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
 你的浏览器。
@@ -109,6 +113,9 @@ scripts/check-test-browser.js --inject-public-script
 # 可选：检查布局全过程、语义路由和用户手动改速
 scripts/check-test-browser.js --inject-local-script --probe-layout-timeline --probe-detail-edge --probe-fullscreen
 scripts/check-test-browser.js --inject-local-script --probe-semantic-route --probe-manual-rate
+
+# 检查封面命中边界、滚动收起和离开页面收起
+scripts/check-test-browser.js --inject-local-script --probe-cover-boundary
 
 # 会真实切换收藏并恢复测试前的全部收藏夹状态，仅在明确授权后执行
 scripts/check-test-browser.js --inject-local-script --toggle-detail-favorite

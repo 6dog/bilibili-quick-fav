@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一键收藏+默认1.5倍速
 // @namespace    bilibili-quick-fav
-// @version      1.74
+// @version      1.75
 // @description  鼠标悬停视频封面显示收藏按钮，一键收藏/取消收藏到指定收藏夹；默认播放速度 1.5 倍
 // @author       jesseyun
 // @homepageURL  https://github.com/6dog/bilibili-quick-fav
@@ -45,6 +45,7 @@
   let knownFolderIds = null;
   let coverStateObserver = null;
   let coverResizeObserver = null;
+  let coverRescanFrame = 0;
   let overlayHost = null;
   let overlayRoot = null;
   let overlayLayer = null;
@@ -481,30 +482,8 @@
   }
 
   // ===== 隔离浮层 =====
-  const COVER_CARD_SELECTORS = [
-    ".bili-video-card",
-    ".video-card",
-    ".small-item",
-    ".video-list-item",
-    ".fav-video-list .items .item",
-    ".feed-card",
-    ".bili-feed-card",
-    ".bili-dyn-card-video",
-  ];
-  const LINK_CARD_FALLBACK_SELECTOR = [
-    ".bili-dyn-card-video",
-    ".bili-feed-card",
-    ".feed-card",
-    ".bili-video-card",
-    ".video-card",
-    ".small-item",
-    ".video-list-item",
-    ".fav-video-list .items .item",
-    "article",
-    'a[href*="/video/BV"]',
-  ].join(",");
-  const MEDIA_HINT_SELECTOR = "img, picture, video, canvas";
-  const COVER_CARD_SELECTOR = COVER_CARD_SELECTORS.join(",");
+  const VIDEO_LINK_SELECTOR = 'a[href*="/video/BV"]';
+  const COVER_MEDIA_SELECTOR = "img, video, canvas";
 
   function ensureOverlayRoot() {
     if (overlayRoot?.isConnected) return overlayRoot;
@@ -597,7 +576,7 @@
       .qfav-btn.qfav-active:hover {
         background: rgba(0, 174, 236, 0.32);
       }
-      .qfav-btn.qfav-loading {
+      .qfav-btn.qfav-visible.qfav-loading {
         pointer-events: none;
         opacity: 0.5 !important;
       }
@@ -1044,6 +1023,7 @@
     layoutStableFrames = 0;
     layoutReadyToShow = false;
     lastLayoutSignature = "";
+    setActiveCoverRecord(null);
     hideDetailButtonImmediately();
     scheduleOverlayLayout();
   }
@@ -1198,69 +1178,57 @@
     callback();
   }
 
-  function normalizeVideoCardTarget(target) {
-    if (!target || isInsideHeader(target)) return null;
+  function findVideoCoverSurface(link) {
+    if (!link || isInsideHeader(link)) return null;
 
-    const nestedCover = target.matches?.(COVER_CARD_SELECTOR)
-      ? target
-      : target.querySelector?.(COVER_CARD_SELECTOR);
-    if (nestedCover && !isInsideHeader(nestedCover)) {
-      return nestedCover;
+    const mediaCandidates = [...link.querySelectorAll(COVER_MEDIA_SELECTOR)]
+      .map((media) => ({ media, rect: media.getBoundingClientRect() }))
+      .sort(
+        (a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height,
+      );
+    const primary = mediaCandidates[0];
+    if (!primary) return null;
+
+    if (primary.rect.width < 64 || primary.rect.height < 36) {
+      const provisionalSurface = primary.media.parentElement;
+      return provisionalSurface && link.contains(provisionalSurface)
+        ? provisionalSurface
+        : primary.media;
     }
 
-    if (
-      target.matches?.(MEDIA_HINT_SELECTOR) ||
-      target.querySelector?.(MEDIA_HINT_SELECTOR)
+    const mediaArea = primary.rect.width * primary.rect.height;
+    let surface = primary.media;
+    for (
+      let candidate = primary.media.parentElement;
+      candidate && link.contains(candidate);
+      candidate = candidate.parentElement
     ) {
-      return target;
+      const rect = candidate.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (
+        rect.width >= primary.rect.width * 0.9 &&
+        rect.height >= primary.rect.height * 0.9 &&
+        area <= mediaArea * 1.2
+      ) {
+        surface = candidate;
+      }
+      if (candidate === link) break;
     }
-
-    return null;
+    return isInsideHeader(surface) ? null : surface;
   }
 
   function collectVideoCardTargets() {
-    const targets = new Set();
-
-    document.querySelectorAll(COVER_CARD_SELECTOR).forEach((card) => {
-      const target = normalizeVideoCardTarget(card);
-      if (target) {
-        targets.add(target);
-      }
+    const targets = new Map();
+    document.querySelectorAll(VIDEO_LINK_SELECTOR).forEach((link) => {
+      const bvid = extractBvid(link);
+      const target = findVideoCoverSurface(link);
+      if (bvid && target && !targets.has(target)) targets.set(target, bvid);
     });
-
-    document.querySelectorAll('a[href*="/video/BV"]').forEach((link) => {
-      const card = normalizeVideoCardTarget(
-        link.closest(LINK_CARD_FALLBACK_SELECTOR) || link.parentElement || link,
-      );
-      if (card) {
-        targets.add(card);
-      }
-    });
-
-    const items = Array.from(targets).map((target) => ({
-      target,
-      bvid: extractBvid(target),
-    }));
-
-    return items
-      .filter(({ target, bvid }) => {
-        if (!bvid) return false;
-        return !items.some(
-          (other) =>
-            other.target !== target &&
-            other.bvid === bvid &&
-            target.contains(other.target),
-        );
-      })
-      .map(({ target }) => target);
+    return targets;
   }
 
   function scanVideoCards() {
-    const discovered = new Map();
-    collectVideoCardTargets().forEach((card) => {
-      const bvid = extractBvid(card);
-      if (bvid) discovered.set(card, bvid);
-    });
+    const discovered = collectVideoCardTargets();
 
     [...coverRecords.values()].forEach((record) => {
       if (
@@ -1273,8 +1241,8 @@
       }
     });
 
-    discovered.forEach((bvid, card) => {
-      if (!coverRecords.has(card)) createCoverRecord(card, bvid);
+    discovered.forEach((bvid, target) => {
+      if (!coverRecords.has(target)) createCoverRecord(target, bvid);
     });
     scheduleOverlayLayout();
   }
@@ -1805,7 +1773,14 @@
   function bindOverlayLifecycle() {
     ensureOverlayRoot();
     if ("ResizeObserver" in window) {
-      coverResizeObserver = new ResizeObserver(scheduleOverlayLayout);
+      coverResizeObserver = new ResizeObserver(() => {
+        scheduleOverlayLayout();
+        if (coverRescanFrame) return;
+        coverRescanFrame = requestAnimationFrame(() => {
+          coverRescanFrame = 0;
+          scanVideoCards();
+        });
+      });
       detailResizeObserver = new ResizeObserver(beginLayoutStabilization);
     }
     layoutAttributeObserver = new MutationObserver(beginLayoutStabilization);
@@ -1822,7 +1797,19 @@
       true,
     );
     window.addEventListener("blur", () => setActiveCoverRecord(null));
-    window.addEventListener("scroll", scheduleOverlayLayout, {
+    document.documentElement.addEventListener(
+      "pointerleave",
+      () => setActiveCoverRecord(null),
+      { passive: true },
+    );
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) setActiveCoverRecord(null);
+    });
+    const handleScroll = () => {
+      setActiveCoverRecord(null);
+      scheduleOverlayLayout();
+    };
+    window.addEventListener("scroll", handleScroll, {
       capture: true,
       passive: true,
     });
@@ -1830,7 +1817,7 @@
     window.visualViewport?.addEventListener("resize", beginLayoutStabilization, {
       passive: true,
     });
-    window.visualViewport?.addEventListener("scroll", scheduleOverlayLayout, {
+    window.visualViewport?.addEventListener("scroll", handleScroll, {
       passive: true,
     });
     document.addEventListener("fullscreenchange", beginLayoutStabilization);

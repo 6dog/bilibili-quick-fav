@@ -14,6 +14,7 @@ const probeManualRate = process.argv.includes("--probe-manual-rate");
 const probeSemanticRoute = process.argv.includes("--probe-semantic-route");
 const probeFullscreen = process.argv.includes("--probe-fullscreen");
 const probeDetailEdge = process.argv.includes("--probe-detail-edge");
+const probeCoverBoundary = process.argv.includes("--probe-cover-boundary");
 const probeLayoutTimeline =
   process.argv.includes("--probe-layout-timeline") || probeDetailEdge;
 const probeStateFailure = process.argv.includes("--probe-state-failure");
@@ -142,6 +143,39 @@ function collectAssertionFailures(result) {
       );
       expect(Number(result.coverHover.hoveredOpacity) >= 0.9, "cover button did not appear on hover");
     }
+  }
+
+  if (probeCoverBoundary) {
+    expect(result.coverBoundaryTest?.tested, "cover boundary probe did not run");
+    expect(
+      result.coverBoundaryTest?.totalTargets > 0,
+      "cover boundary probe found no video cover targets",
+    );
+    expect(result.coverHover, "cover hover probe did not reach a visible video cover");
+    expect(
+      result.coverBoundaryTest?.oversizedTargets === 0,
+      "quick-favorite hover targets extend beyond their video covers",
+    );
+    expect(
+      Number(result.coverBoundaryTest?.loadingHiddenOpacity) === 0,
+      "loading cover button remains visible outside hover",
+    );
+    if (result.coverBoundaryTest?.outsideHoverTested) {
+      expect(
+        result.coverBoundaryTest?.outsideVisibleButtons === 0,
+        "cover button remains visible over title or metadata area",
+      );
+    }
+    if (result.coverBoundaryTest?.scrollTested) {
+      expect(
+        result.coverBoundaryTest?.scrollVisibleButtons === 0,
+        "cover button remains visible while scrolling",
+      );
+    }
+    expect(
+      result.coverBoundaryTest?.pointerLeaveVisibleButtons === 0,
+      "cover button remains visible after pointer leaves the page",
+    );
   }
 
   if (isVideoPage) {
@@ -362,6 +396,32 @@ async function main() {
   const headerAt3 = await headerAt3Promise;
   const headerAt8 = await inspectHeader(cdp);
 
+  if (probeCoverBoundary) {
+    const scrolledToCover = await cdp.send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const root = document.querySelector("#qfav-overlay-host")?.shadowRoot;
+        const buttons = [...(root?.querySelectorAll(".qfav-btn") || [])];
+        const hasVisibleTarget = buttons.some((button) => {
+          const rect = button.qfavTarget?.getBoundingClientRect();
+          return rect && rect.width > 0 && rect.height > 0 &&
+            rect.bottom > 0 && rect.right > 0 &&
+            rect.top < innerHeight && rect.left < innerWidth;
+        });
+        const scrollTarget = buttons
+          .map((button) => button.qfavTarget)
+          .find((target) => {
+            const rect = target?.getBoundingClientRect();
+            return rect && rect.width > 0 && rect.height > 0;
+          });
+        if (hasVisibleTarget || !scrollTarget) return false;
+        scrollTarget.scrollIntoView({ block: "center", inline: "nearest" });
+        return true;
+      })()`,
+    });
+    if (scrolledToCover.result?.result?.value) await wait(250);
+  }
+
   let coverHover = null;
   const coverProbe = await cdp.send("Runtime.evaluate", {
     returnByValue: true,
@@ -404,7 +464,7 @@ async function main() {
     });
 
     let hoveredOpacity = coverBeforeHover.opacity;
-    while (Date.now() - hoverStartedAt < 500) {
+    while (Date.now() - hoverStartedAt < 1500) {
       const hoverProbe = await cdp.send("Runtime.evaluate", {
         returnByValue: true,
         expression: `(() => {
@@ -429,6 +489,182 @@ async function main() {
       pointClass: coverBeforeHover.pointClass,
     };
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
+  }
+
+  let coverBoundaryTest = { tested: false };
+  if (probeCoverBoundary) {
+    const boundaryResult = await cdp.send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const root = document.querySelector("#qfav-overlay-host")?.shadowRoot;
+        const buttons = [...(root?.querySelectorAll(".qfav-btn") || [])];
+        const rows = buttons.map((button) => {
+          const target = button.qfavTarget;
+          const media = target?.matches?.("img,video,canvas")
+            ? target
+            : target?.querySelector?.("img,video,canvas");
+          const targetRect = target?.getBoundingClientRect();
+          const mediaRect = media?.getBoundingClientRect();
+          const targetArea = Math.max(0, targetRect?.width || 0) * Math.max(0, targetRect?.height || 0);
+          const mediaArea = Math.max(0, mediaRect?.width || 0) * Math.max(0, mediaRect?.height || 0);
+          const areaRatio = mediaArea > 0 ? targetArea / mediaArea : Infinity;
+          const oversized = targetArea > 0 && (!media || mediaArea <= 0 || areaRatio > 1.2);
+          const videoLink = target?.matches?.('a[href*="/video/BV"]')
+            ? target
+            : target?.closest?.('a[href*="/video/BV"]') ||
+              target?.querySelector?.('a[href*="/video/BV"]');
+          const linkRect = videoLink?.getBoundingClientRect();
+          const pointCandidates = linkRect
+            ? [
+                [linkRect.right - 12, linkRect.top + linkRect.height / 2],
+                [linkRect.right - 12, linkRect.bottom - 12],
+                [linkRect.left + linkRect.width / 2, linkRect.bottom - 12],
+              ]
+            : [];
+          const outsidePoint = pointCandidates.find(([x, y]) => {
+            if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return false;
+            const outsideTarget =
+              x < targetRect.left || x > targetRect.right ||
+              y < targetRect.top || y > targetRect.bottom;
+            const hit = document.elementFromPoint(x, y);
+            return outsideTarget && hit && videoLink.contains(hit);
+          });
+          return {
+            bvid: button.dataset.qfavBvid || null,
+            targetTag: target?.tagName || null,
+            targetClass: String(target?.className || "").slice(0, 160),
+            mediaTag: media?.tagName || null,
+            mediaClass: String(media?.className || "").slice(0, 160),
+            targetWidth: Math.round(targetRect?.width || 0),
+            targetHeight: Math.round(targetRect?.height || 0),
+            mediaWidth: Math.round(mediaRect?.width || 0),
+            mediaHeight: Math.round(mediaRect?.height || 0),
+            areaRatio: Number.isFinite(areaRatio) ? Math.round(areaRatio * 100) / 100 : null,
+            targetIsVideoLink: target === videoLink,
+            outsidePoint: outsidePoint
+              ? { x: outsidePoint[0], y: outsidePoint[1] }
+              : null,
+            oversized,
+          };
+        });
+        return {
+          tested: true,
+          totalTargets: rows.length,
+          oversizedTargets: rows.filter((row) => row.oversized).length,
+          samples: rows.filter((row) => row.oversized).slice(0, 8),
+          outsidePoint: rows.find((row) => row.outsidePoint)?.outsidePoint || null,
+        };
+      })()`,
+    });
+    coverBoundaryTest = boundaryResult.result?.result?.value || {
+      tested: false,
+      error: "cover boundary test returned no value",
+    };
+
+    const loadingSetupResult = await cdp.send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const button = document.querySelector("#qfav-overlay-host")?.shadowRoot
+          ?.querySelector(".qfav-btn");
+        if (!button) return false;
+        button.classList.remove("qfav-visible");
+        button.classList.add("qfav-loading");
+        return true;
+      })()`,
+    });
+    if (loadingSetupResult.result?.result?.value) await wait(120);
+    const loadingResult = await cdp.send("Runtime.evaluate", {
+      returnByValue: true,
+      expression: `(() => {
+        const button = document.querySelector("#qfav-overlay-host")?.shadowRoot
+          ?.querySelector(".qfav-btn");
+        if (!button) return null;
+        const opacity = getComputedStyle(button).opacity;
+        button.classList.remove("qfav-loading");
+        return opacity;
+      })()`,
+    });
+    coverBoundaryTest.loadingHiddenOpacity =
+      loadingResult.result?.result?.value ?? null;
+
+    if (coverBoundaryTest.outsidePoint) {
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        ...coverBoundaryTest.outsidePoint,
+      });
+      await wait(120);
+      const outsideResult = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `document.querySelector("#qfav-overlay-host")?.shadowRoot
+          ?.querySelectorAll(".qfav-btn.qfav-visible").length || 0`,
+      });
+      coverBoundaryTest.outsideHoverTested = true;
+      coverBoundaryTest.outsideVisibleButtons =
+        outsideResult.result?.result?.value ?? null;
+    } else {
+      coverBoundaryTest.outsideHoverTested = false;
+    }
+
+    if (coverBeforeHover) {
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: coverBeforeHover.x,
+        y: coverBeforeHover.y,
+      });
+      await wait(80);
+      const scrollBeforeResult = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `({ x: scrollX, y: scrollY })`,
+      });
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: coverBeforeHover.x,
+        y: coverBeforeHover.y,
+        deltaX: 0,
+        deltaY: 120,
+      });
+      await wait(120);
+      const scrollResult = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `({
+          x: scrollX,
+          y: scrollY,
+          visibleButtons: document.querySelector("#qfav-overlay-host")?.shadowRoot
+            ?.querySelectorAll(".qfav-btn.qfav-visible").length || 0,
+        })`,
+      });
+      const scrollBefore = scrollBeforeResult.result?.result?.value;
+      const scrollAfter = scrollResult.result?.result?.value;
+      coverBoundaryTest.scrollTested = Boolean(
+        scrollBefore && scrollAfter &&
+          (scrollBefore.x !== scrollAfter.x || scrollBefore.y !== scrollAfter.y),
+      );
+      coverBoundaryTest.scrollVisibleButtons = scrollAfter?.visibleButtons ?? null;
+
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: coverBeforeHover.x,
+        y: coverBeforeHover.y,
+      });
+      await wait(80);
+      await cdp.send("Runtime.evaluate", {
+        expression: `document.documentElement.dispatchEvent(
+          new PointerEvent("pointerleave", { bubbles: false }),
+        )`,
+      });
+      await wait(120);
+      const pointerLeaveResult = await cdp.send("Runtime.evaluate", {
+        returnByValue: true,
+        expression: `document.querySelector("#qfav-overlay-host")?.shadowRoot
+          ?.querySelectorAll(".qfav-btn.qfav-visible").length || 0`,
+      });
+      coverBoundaryTest.pointerLeaveVisibleButtons =
+        pointerLeaveResult.result?.result?.value ?? null;
+    } else {
+      coverBoundaryTest.scrollTested = false;
+      coverBoundaryTest.pointerLeaveVisibleButtons = null;
+    }
+    delete coverBoundaryTest.outsidePoint;
   }
 
   let playerTopHover = null;
@@ -1167,6 +1403,7 @@ async function main() {
           viewportLayoutTest: ${JSON.stringify(viewportLayoutTest)},
           layoutTimeline: globalThis.__qfavLayoutMonitor || null,
           coverHover: ${JSON.stringify(coverHover)},
+          coverBoundaryTest: ${JSON.stringify(coverBoundaryTest)},
           pageHeader: inspectVisibility(pageHeader),
           playerTop: inspectVisibility(playerTop),
           playerTopHover: ${JSON.stringify(playerTopHover)},
