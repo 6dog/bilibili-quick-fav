@@ -181,6 +181,17 @@ function collectAssertionFailures(result) {
   if (isVideoPage) {
     expect(result.detailQuickFav?.count === 1, "detail button count is not exactly one");
     expect(result.detailQuickFav?.ready === "1", "detail favorite state was not confirmed");
+    if (!result.detailQuickFav?.active) {
+      expect(
+        result.detailQuickFav?.stroke === "currentColor",
+        "detail idle icon does not inherit the adaptive contrast color",
+      );
+      expect(
+        result.detailQuickFav?.surface ===
+          (result.detailQuickFav?.onDarkSurface ? "dark" : "light"),
+        "detail icon color does not match the toolbar surface",
+      );
+    }
   }
 
   if (probeLayoutTimeline) {
@@ -1416,6 +1427,31 @@ async function main() {
                 ready: detailButton.dataset.qfavStateReady || null,
                 fill: detailIcon?.getAttribute("fill") || null,
                 stroke: detailIcon?.getAttribute("stroke") || null,
+                color: getComputedStyle(detailButton).color,
+                onDarkSurface: detailButton.classList.contains("qfav-on-dark"),
+                surface: (() => {
+                  for (
+                    let element = detailButton.qfavTarget;
+                    element;
+                    element = element.parentElement
+                  ) {
+                    const match = getComputedStyle(element).backgroundColor.match(
+                      /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i,
+                    );
+                    if (!match || (match[4] !== undefined && Number(match[4]) < 0.5)) {
+                      continue;
+                    }
+                    const luminance =
+                      (0.2126 * Number(match[1]) +
+                        0.7152 * Number(match[2]) +
+                        0.0722 * Number(match[3])) /
+                      255;
+                    return luminance < 0.5 ? "dark" : "light";
+                  }
+                  return matchMedia("(prefers-color-scheme: dark)").matches
+                    ? "dark"
+                    : "light";
+                })(),
                 visibility: getComputedStyle(detailButton).visibility,
                 count: qfavRoot.querySelectorAll(".qfav-detail-btn").length,
               }
