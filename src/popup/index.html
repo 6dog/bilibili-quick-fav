@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>B站快捷收藏</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="../icons/icon-48.png" width="42" height="42" alt="">
+        <div>
+          <h1>B站快捷收藏</h1>
+          <p id="version">正在连接当前页面…</p>
+        </div>
+      </header>
+      <section id="status" class="card" aria-live="polite">
+        <span class="label">快捷收藏夹</span>
+        <strong id="folder">读取中…</strong>
+        <button id="choose-folder" type="button">选择或更换</button>
+      </section>
+      <label class="toggle card">
+        <span><span class="label">默认播放速度</span><strong>1.5×</strong></span>
+        <input id="playback-enabled" type="checkbox" checked>
+      </label>
+      <p id="message" class="message"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
