@@ -200,6 +200,19 @@ async function checkCoverPage(label, url) {
     assert(hovered.visible, `${label}: cover button did not appear on hover (${JSON.stringify(hovered)})`);
     assert(hovered.left >= cover.rect.left && hovered.left < cover.rect.right, `${label}: button escaped cover horizontally`);
     assert(hovered.top >= cover.rect.top && hovered.top < cover.rect.bottom, `${label}: button escaped cover vertically`);
+    const buttonPoint = await evaluate(page.cdp, `(() => {
+      const rect = document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.cover-button')?.getBoundingClientRect();
+      return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+    })()`);
+    assert(buttonPoint, `${label}: cover button has no hit target`);
+    await moveMouse(page.cdp, buttonPoint.x, buttonPoint.y);
+    await wait(180);
+    const buttonHoverVisible = await evaluate(page.cdp, `(() => {
+      const button = document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.cover-button');
+      const style = button ? getComputedStyle(button) : null;
+      return style?.visibility === 'visible' && Number(style.opacity) > .2 && button?.matches(':hover');
+    })()`);
+    assert(buttonHoverVisible, `${label}: cover button flickered or disappeared while pointer was over it`);
     await moveMouse(page.cdp, 2, 2);
     await wait(200);
     const outsideVisible = await evaluate(page.cdp, `getComputedStyle(document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.cover-button')).visibility === 'visible'`);

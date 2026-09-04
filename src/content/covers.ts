@@ -170,10 +170,12 @@ export class CoverController {
   }
 
   private recordFromEvent(event: Event): CoverRecord | null {
+    const path = event.composedPath();
+    if (this.#active && path.includes(this.ui.coverButton)) return this.#active;
     const pointer = event instanceof PointerEvent
       ? { x: event.clientX, y: event.clientY }
       : null;
-    for (const node of event.composedPath()) {
+    for (const node of path) {
       if (node instanceof Element) {
         const record = this.#records.get(node);
         if (record) return record;
