@@ -105,7 +105,8 @@ export class OverlayUi {
     button.innerHTML = bookmarkSvg(snapshot.active, size);
     button.classList.toggle("active", snapshot.active);
     button.classList.toggle("loading", snapshot.status === "loading" || snapshot.status === "mutating");
-    button.disabled = snapshot.configured && (snapshot.status === "unknown" || snapshot.status === "loading" || snapshot.status === "mutating");
+    button.disabled = snapshot.status === "mutating";
+    button.setAttribute("aria-busy", String(snapshot.status === "loading" || snapshot.status === "mutating"));
     const action = snapshot.active ? "从" : "收藏到";
     button.title = snapshot.configured
       ? `${action}「${snapshot.folderTitle || "快捷收藏夹"}」`

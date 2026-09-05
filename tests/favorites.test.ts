@@ -45,9 +45,10 @@ describe("FavoriteService", () => {
     expect((await service.load("BV1abc", "high")).active).toBe(false);
     expect((await service.toggle("BV1abc")).active).toBe(true);
     expect(api.writes).toEqual([{ aid: 99, folderId: "20", active: true }]);
-    expect(notices).toEqual([]);
+    expect(notices).toEqual(["已收藏到「快捷」"]);
     expect((await service.toggle("BV1abc")).active).toBe(false);
     expect(api.writes[1]).toEqual({ aid: 99, folderId: "20", active: false });
+    expect(notices[1]).toBe("已从「快捷」移除");
   });
 
   it("deduplicates concurrent toggles into one write", async () => {

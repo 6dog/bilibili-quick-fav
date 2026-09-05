@@ -158,7 +158,7 @@ async function checkCoverPage(label, url) {
     await waitFor(page.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot");
     await wait(3_000);
     const base = await inspectBase(page.cdp);
-    assert(base.version === "2.0.0", `${label}: extension version marker missing`);
+    assert(base.version === "2.0.1", `${label}: extension version marker missing`);
     assert(base.runtime === "chrome-extension", `${label}: wrong runtime`);
     assert(base.directBodyChild && base.shadow, `${label}: Shadow DOM isolation missing`);
     assert(base.coverButtonCount === 1, `${label}: expected one reusable cover button`);
@@ -198,6 +198,7 @@ async function checkCoverPage(label, url) {
     }
     assert(cover && hovered, `${label}: no stable BVID cover produced a hover button (${JSON.stringify(hovered)})`);
     assert(hovered.visible, `${label}: cover button did not appear on hover (${JSON.stringify(hovered)})`);
+    assert(!hovered.disabled, `${label}: first cover click would be swallowed while state loads`);
     assert(hovered.left >= cover.rect.left && hovered.left < cover.rect.right, `${label}: button escaped cover horizontally`);
     assert(hovered.top >= cover.rect.top && hovered.top < cover.rect.bottom, `${label}: button escaped cover vertically`);
     const buttonPoint = await evaluate(page.cdp, `(() => {
@@ -238,7 +239,7 @@ async function checkVideoPage(url) {
     await waitFor(page.cdp, "document.querySelector('.bpx-player-video-wrap video,#bilibili-player video')", 30_000);
     await wait(4_500);
     const base = await inspectBase(page.cdp);
-    assert(base.version === "2.0.0" && base.detailButtonCount === 1, "video: extension/detail marker missing");
+    assert(base.version === "2.0.1" && base.detailButtonCount === 1, "video: extension/detail marker missing");
     assert(!base.oldUserscriptPresent, "video: old userscript is also active");
     const initial = await evaluate(page.cdp, `(() => {
       const video = document.querySelector('.bpx-player-video-wrap video,#bilibili-player video');

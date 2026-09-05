@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "B站快捷收藏与默认倍速",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "在B站视频封面和详情页快速收藏到指定收藏夹，并让新视频默认以1.5倍速播放。",
   "permissions": ["storage"],
   "icons": {

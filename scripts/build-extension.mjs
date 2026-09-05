@@ -45,6 +45,6 @@ await mkdir(path.join(projectRoot, "dist", "store-assets"), { recursive: true })
 await sharp(promoSvg).png().toFile(path.join(projectRoot, "dist", "store-assets", "small-promo-440x280.png"));
 const screenshotSvg = await readFile(path.join(projectRoot, "assets", "store-screenshot.svg"));
 await sharp(screenshotSvg).png().toFile(path.join(projectRoot, "dist", "store-assets", "screenshot-1280x800.png"));
-await writeFile(path.join(outputRoot, "BUILD_VERSION"), "2.0.0\n", "utf8");
+await writeFile(path.join(outputRoot, "BUILD_VERSION"), "2.0.1\n", "utf8");
 
 console.log(`Built extension at ${outputRoot}`);

@@ -206,7 +206,11 @@ export class FavoriteService {
           folderTitle: folder.title,
           ...(reconciled === desired ? {} : { message: "B站未确认本次操作" }),
         });
-        if (reconciled !== desired) this.ui.showNotice("收藏状态没有改变，请稍后重试");
+        if (reconciled === desired) {
+          this.ui.showNotice(desired ? `已收藏到「${folder.title}」` : `已从「${folder.title}」移除`);
+        } else {
+          this.ui.showNotice("收藏状态没有改变，请稍后重试");
+        }
         return result;
       }
 

@@ -29,7 +29,7 @@
 - `npm run check`：依次执行上述完整本地门禁。
 - `npm run test:release`：从待上传 ZIP 临时安装并执行真实浏览器门禁；包含可逆收藏测试，仅用于已授权的隔离测试账号。
 
-最终上传文件位于 `dist/release/bilibili-quick-fav-2.0.0.zip`。商店审核使用的版本应当重新从该 ZIP 安装并完成真实浏览器验收。
+最终上传文件位于 `dist/release/bilibili-quick-fav-2.0.1.zip`。商店审核使用的版本应当重新从该 ZIP 安装并完成真实浏览器验收。
 
 ## 隐私
 
