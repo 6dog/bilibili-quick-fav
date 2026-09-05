@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/qfav-browser-env.sh
 
-release_zip="${QFAV_RELEASE_ZIP:-$PWD/dist/release/bilibili-quick-fav-2.0.1.zip}"
+release_zip="${QFAV_RELEASE_ZIP:-$PWD/dist/release/bilibili-quick-fav-2.0.2.zip}"
 if [[ ! -f "$release_zip" ]]; then
   echo "Release ZIP is missing: $release_zip" >&2
   exit 1
@@ -14,7 +14,7 @@ if curl -fsS --max-time 2 "http://127.0.0.1:$QFAV_BROWSER_PORT/json/version" >/d
   exit 2
 fi
 
-test_dir="$(mktemp -d "${TMPDIR:-/tmp}/qfav-release-2.0.1.XXXXXX")"
+test_dir="$(mktemp -d "${TMPDIR:-/tmp}/qfav-release-2.0.2.XXXXXX")"
 chrome_log="$test_dir/chrome.log"
 chrome_pid=""
 cleanup() {

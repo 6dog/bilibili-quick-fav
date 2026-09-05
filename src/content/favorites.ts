@@ -3,7 +3,7 @@ import { DEFAULT_PLAYBACK_RATE, EXTENSION_VERSION } from "../shared/types";
 import { SettingsRepository } from "../shared/settings";
 import { BiliApi, BiliApiError } from "./api";
 import { OverlayUi } from "./overlay";
-import { TaskQueue } from "./task-queue";
+import { TaskQueue, type QueuedTaskHandle } from "./task-queue";
 
 type Subscriber = (snapshot: FavoriteSnapshot) => void;
 
@@ -18,7 +18,7 @@ export class FavoriteService {
   readonly #entries = new Map<string, FavoriteSnapshot>();
   readonly #subscribers = new Map<string, Set<Subscriber>>();
   readonly #aidCache = new Map<string, number>();
-  readonly #stateLoads = new Map<string, Promise<FavoriteSnapshot>>();
+  readonly #stateLoads = new Map<string, QueuedTaskHandle<FavoriteSnapshot>>();
   readonly #toggles = new Map<string, Promise<FavoriteSnapshot>>();
   readonly #queue = new TaskQueue(4);
   #midPromise: Promise<string> | null = null;
@@ -111,9 +111,12 @@ export class FavoriteService {
     const current = this.snapshot(bvid);
     if (current.status === "active" || current.status === "inactive") return current;
     const pending = this.#stateLoads.get(bvid);
-    if (pending) return pending;
+    if (pending) {
+      if (priority === "high") pending.promote();
+      return pending.promise;
+    }
 
-    const promise = this.#queue.add(async () => {
+    const handle = this.#queue.add(async () => {
       let viewerMid: string | null = null;
       try {
         const { mid, folder } = await this.context(false);
@@ -151,8 +154,8 @@ export class FavoriteService {
         this.#stateLoads.delete(bvid);
       }
     }, priority);
-    this.#stateLoads.set(bvid, promise);
-    return promise;
+    this.#stateLoads.set(bvid, handle);
+    return handle.promise;
   }
 
   private handleLoadError(bvid: string, error: unknown): FavoriteSnapshot {
@@ -188,46 +191,53 @@ export class FavoriteService {
         return previous;
       }
       const desired = !previous.active;
-      this.publish(bvid, { ...previous, status: "mutating" });
+      this.publish(bvid, { ...previous, status: "mutating", active: desired });
       const aid = await this.aid(bvid);
-      let writeError: unknown = null;
       try {
         await this.api.setFolderState(aid, folder.id, desired, this.#generation.signal);
       } catch (error) {
-        writeError = error;
-      }
+        const reconciled = await this.reconcile(mid, aid, folder, desired);
+        if (reconciled !== null) {
+          if (reconciled === desired) return this.publishConfirmed(bvid, folder, desired);
+          const result = this.publish(bvid, {
+            status: reconciled ? "active" : "inactive",
+            active: reconciled,
+            configured: true,
+            folderTitle: folder.title,
+            message: "B站未确认本次操作",
+          });
+          this.ui.showNotice("收藏状态没有改变，请稍后重试");
+          return result;
+        }
 
-      const reconciled = await this.reconcile(mid, aid, folder, desired);
-      if (reconciled !== null) {
-        const result = this.publish(bvid, {
-          status: reconciled ? "active" : "inactive",
-          active: reconciled,
+        const message = error instanceof Error ? error.message : "操作结果暂时无法确认";
+        this.ui.showNotice(`${message}，没有自动重试写入`);
+        return this.publish(bvid, {
+          status: "error",
+          active: previous.active,
           configured: true,
           folderTitle: folder.title,
-          ...(reconciled === desired ? {} : { message: "B站未确认本次操作" }),
+          message,
         });
-        if (reconciled === desired) {
-          this.ui.showNotice(desired ? `已收藏到「${folder.title}」` : `已从「${folder.title}」移除`);
-        } else {
-          this.ui.showNotice("收藏状态没有改变，请稍后重试");
-        }
-        return result;
       }
 
-      const message = writeError instanceof Error ? writeError.message : "操作结果暂时无法确认";
-      this.ui.showNotice(`${message}，没有自动重试写入`);
-      return this.publish(bvid, {
-        status: "error",
-        active: previous.active,
-        configured: true,
-        folderTitle: folder.title,
-        message,
-      });
+      return this.publishConfirmed(bvid, folder, desired);
     } catch (error) {
       const message = error instanceof Error ? error.message : "收藏操作失败";
       this.ui.showNotice(message);
       return this.handleLoadError(bvid, error);
     }
+  }
+
+  private publishConfirmed(bvid: string, folder: QuickFolder, active: boolean): FavoriteSnapshot {
+    const result = this.publish(bvid, {
+      status: active ? "active" : "inactive",
+      active,
+      configured: true,
+      folderTitle: folder.title,
+    });
+    this.ui.showNotice(active ? `已收藏到「${folder.title}」` : `已从「${folder.title}」移除`);
+    return result;
   }
 
   private async reconcile(mid: string, aid: number, folder: QuickFolder, desired: boolean): Promise<boolean | null> {

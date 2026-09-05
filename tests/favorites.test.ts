@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { BiliApi, BiliApiError } from "../src/content/api";
 import { FavoriteService } from "../src/content/favorites";
 import { SettingsRepository } from "../src/shared/settings";
@@ -6,6 +6,7 @@ import type { BiliFolder, QuickFolder, SettingsV1 } from "../src/shared/types";
 
 class FakeApi extends BiliApi {
   active = false;
+  stateReads = 0;
   writes: Array<{ aid: number; folderId: string; active: boolean }> = [];
   override async getViewerMid(): Promise<string> { return "10"; }
   override async getAid(): Promise<number> { return 99; }
@@ -17,6 +18,7 @@ class FakeApi extends BiliApi {
   }
   override async getFolderState(_mid: string, _aid: number, folderId: string): Promise<boolean> {
     if (folderId !== "20") throw new Error("wrong folder");
+    this.stateReads += 1;
     return this.active;
   }
   override async setFolderState(aid: number, folderId: string, active: boolean): Promise<void> {
@@ -43,8 +45,10 @@ describe("FavoriteService", () => {
       showNotice: (message) => notices.push(message),
     });
     expect((await service.load("BV1abc", "high")).active).toBe(false);
+    expect(api.stateReads).toBe(1);
     expect((await service.toggle("BV1abc")).active).toBe(true);
     expect(api.writes).toEqual([{ aid: 99, folderId: "20", active: true }]);
+    expect(api.stateReads).toBe(1);
     expect(notices).toEqual(["已收藏到「快捷」"]);
     expect((await service.toggle("BV1abc")).active).toBe(false);
     expect(api.writes[1]).toEqual({ aid: 99, folderId: "20", active: false });
@@ -62,6 +66,33 @@ describe("FavoriteService", () => {
     expect(first.active).toBe(true);
     expect(second.active).toBe(true);
     expect(api.writes).toHaveLength(1);
+  });
+
+  it("updates the icon immediately while a single write is pending", async () => {
+    class DeferredApi extends FakeApi {
+      release: () => void = () => {};
+      gate = new Promise<void>((resolve) => { this.release = resolve; });
+      override async setFolderState(aid: number, folderId: string, active: boolean): Promise<void> {
+        this.writes.push({ aid, folderId, active });
+        await this.gate;
+        this.active = active;
+      }
+    }
+    const api = new DeferredApi();
+    const service = new FavoriteService(api, new MemorySettings(), {
+      chooseFolder: async () => null,
+      showNotice: () => undefined,
+    });
+    await service.load("BV1abc", "high");
+    const first = service.toggle("BV1abc");
+    await vi.waitFor(() => expect(api.writes).toHaveLength(1));
+    expect(service.snapshot("BV1abc")).toMatchObject({ status: "mutating", active: true });
+    const second = service.toggle("BV1abc");
+    expect(api.writes).toHaveLength(1);
+    api.release();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.active).toBe(true);
+    expect(secondResult.active).toBe(true);
   });
 
   it("reconciles an uncertain write without submitting it twice", async () => {

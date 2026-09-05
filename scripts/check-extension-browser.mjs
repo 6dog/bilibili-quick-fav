@@ -158,7 +158,7 @@ async function checkCoverPage(label, url) {
     await waitFor(page.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot");
     await wait(3_000);
     const base = await inspectBase(page.cdp);
-    assert(base.version === "2.0.1", `${label}: extension version marker missing`);
+    assert(base.version === "2.0.2", `${label}: extension version marker missing`);
     assert(base.runtime === "chrome-extension", `${label}: wrong runtime`);
     assert(base.directBodyChild && base.shadow, `${label}: Shadow DOM isolation missing`);
     assert(base.coverButtonCount === 1, `${label}: expected one reusable cover button`);
@@ -239,7 +239,7 @@ async function checkVideoPage(url) {
     await waitFor(page.cdp, "document.querySelector('.bpx-player-video-wrap video,#bilibili-player video')", 30_000);
     await wait(4_500);
     const base = await inspectBase(page.cdp);
-    assert(base.version === "2.0.1" && base.detailButtonCount === 1, "video: extension/detail marker missing");
+    assert(base.version === "2.0.2" && base.detailButtonCount === 1, "video: extension/detail marker missing");
     assert(!base.oldUserscriptPresent, "video: old userscript is also active");
     const initial = await evaluate(page.cdp, `(() => {
       const video = document.querySelector('.bpx-player-video-wrap video,#bilibili-player video');
@@ -286,8 +286,14 @@ async function reversibleFavoriteTest(url) {
     await clickMouse(page.cdp, buttonPoint.x, buttonPoint.y);
     await waitFor(page.cdp, "document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.folder')", 8_000);
     const folderPoint = await evaluate(page.cdp, `(() => { const r = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.folder').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const firstDesiredActive = snapshot.states[0][1] !== 1;
+    const firstStartedAt = Date.now();
     await clickMouse(page.cdp, folderPoint.x, folderPoint.y);
-    await wait(3_000);
+    await waitFor(page.cdp, `(() => {
+      const button = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button');
+      return button.getAttribute('aria-busy') === 'false' && button.classList.contains('active') === ${firstDesiredActive};
+    })()`, 8_000);
+    const firstClickMs = Date.now() - firstStartedAt;
     const afterFirst = await evaluate(page.cdp, `(async () => {
       const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
       const list = await fetch('https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=' + nav.data.mid + '&type=2&rid=${snapshot.aid}', { credentials: 'include' }).then(r => r.json());
@@ -297,15 +303,20 @@ async function reversibleFavoriteTest(url) {
     assert(changed.length === 1, `favorite: expected exactly one folder change, got ${changed.length}`);
     await waitFor(page.cdp, "document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button.visible:not(:disabled)')", 8_000);
     const secondPoint = await evaluate(page.cdp, `(() => { const r = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const secondStartedAt = Date.now();
     await clickMouse(page.cdp, secondPoint.x, secondPoint.y);
-    await wait(3_000);
+    await waitFor(page.cdp, `(() => {
+      const button = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button');
+      return button.getAttribute('aria-busy') === 'false' && button.classList.contains('active') === ${!firstDesiredActive};
+    })()`, 8_000);
+    const secondClickMs = Date.now() - secondStartedAt;
     const restored = await evaluate(page.cdp, `(async () => {
       const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
       const list = await fetch('https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=' + nav.data.mid + '&type=2&rid=${snapshot.aid}', { credentials: 'include' }).then(r => r.json());
       return list.data.list.map(item => [String(item.id), Number(item.fav_state)]);
     })()`);
     assert(JSON.stringify(restored) === JSON.stringify(snapshot.states), "favorite: original folder state was not restored exactly");
-    return { label: "favorite", changedFolders: 1, restored: true };
+    return { label: "favorite", changedFolders: 1, restored: true, firstClickMs, secondClickMs };
   } finally {
     try {
       if (snapshot) {

@@ -67,7 +67,6 @@ export class OverlayUi {
       .cover-button:hover { transform: scale(1.12); background: rgba(0,0,0,.78); }
       .cover-button.active { color: #00aeec; background: rgba(0,174,236,.26); }
       .cover-button.loading svg, .detail-button.loading svg { animation: pulse .75s ease-in-out infinite alternate; }
-      .cover-button:disabled, .detail-button:disabled { cursor: progress; opacity: .62; }
       .detail-button { width: 28px; height: 28px; min-width: 28px; min-height: 28px; color: rgba(24,25,28,.9); background: transparent; border-radius: 50%; visibility: hidden; pointer-events: none; transition: transform .15s, background .15s; }
       .detail-button.visible { visibility: visible; pointer-events: auto; }
       .detail-button:hover { transform: scale(1.1); background: rgba(24,25,28,.08); }
@@ -105,12 +104,14 @@ export class OverlayUi {
     button.innerHTML = bookmarkSvg(snapshot.active, size);
     button.classList.toggle("active", snapshot.active);
     button.classList.toggle("loading", snapshot.status === "loading" || snapshot.status === "mutating");
-    button.disabled = snapshot.status === "mutating";
+    button.disabled = false;
     button.setAttribute("aria-busy", String(snapshot.status === "loading" || snapshot.status === "mutating"));
     const action = snapshot.active ? "从" : "收藏到";
-    button.title = snapshot.configured
-      ? `${action}「${snapshot.folderTitle || "快捷收藏夹"}」`
-      : "选择快捷收藏夹";
+    button.title = snapshot.status === "mutating"
+      ? (snapshot.active ? "正在收藏…" : "正在取消收藏…")
+      : snapshot.configured
+        ? `${action}「${snapshot.folderTitle || "快捷收藏夹"}」`
+        : "选择快捷收藏夹";
     button.setAttribute("aria-label", button.title);
   }
 

@@ -33,4 +33,4 @@ const result = await new Promise((resolve, reject) => {
 
 socket.close();
 if (!result?.id) throw new Error("Chrome did not return an extension id");
-console.log(JSON.stringify({ ok: true, version: "2.0.1", loaded: true }));
+console.log(JSON.stringify({ ok: true, version: "2.0.2", loaded: true }));

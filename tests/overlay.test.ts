@@ -14,14 +14,15 @@ function snapshot(status: FavoriteSnapshot["status"]): FavoriteSnapshot {
 describe("favorite button responsiveness", () => {
   beforeEach(() => { document.body.innerHTML = ""; });
 
-  it("accepts the first click while state is loading and locks only during mutation", () => {
+  it("accepts clicks without switching the pointer to a waiting cursor", () => {
     const ui = new OverlayUi();
     ui.showCover({ left: 10, top: 10, right: 210, bottom: 130, width: 200, height: 120 }, snapshot("loading"), () => undefined);
     expect(ui.coverButton.disabled).toBe(false);
     expect(ui.coverButton.getAttribute("aria-busy")).toBe("true");
 
     ui.updateCover(snapshot("mutating"));
-    expect(ui.coverButton.disabled).toBe(true);
+    expect(ui.coverButton.disabled).toBe(false);
+    expect(ui.root.querySelector("style")?.textContent).not.toContain("cursor: progress");
     ui.destroy();
   });
 });
