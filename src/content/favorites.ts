@@ -119,6 +119,7 @@ export class FavoriteService {
     const handle = this.#queue.add(async () => {
       let viewerMid: string | null = null;
       try {
+        const aidPromise = this.aid(bvid);
         const { mid, folder } = await this.context(false);
         viewerMid = mid;
         if (!folder) {
@@ -135,7 +136,7 @@ export class FavoriteService {
           configured: true,
           folderTitle: folder.title,
         });
-        const aid = await this.aid(bvid);
+        const aid = await aidPromise;
         const active = await this.api.getFolderState(mid, aid, folder.id, this.#generation.signal);
         return this.publish(bvid, {
           status: active ? "active" : "inactive",

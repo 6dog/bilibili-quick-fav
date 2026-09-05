@@ -214,10 +214,7 @@ export class CoverController {
       this.clearActive();
       return;
     }
-    if (record === this.#active) {
-      this.positionActive();
-      return;
-    }
+    if (record === this.#active) return;
     this.clearActive();
     this.#active = record;
     this.#activeResize.observe(record.surface);

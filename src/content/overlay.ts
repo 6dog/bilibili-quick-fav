@@ -36,19 +36,8 @@ export class OverlayUi {
     this.layer.className = "layer";
     this.coverButton = this.createButton("cover-button", 20);
     this.detailButton = this.createButton("detail-button", 28);
-    this.coverButton.addEventListener("click", (event) => {
-      this.stopEvent(event);
-      this.#coverAction?.();
-    });
-    this.detailButton.addEventListener("click", (event) => {
-      this.stopEvent(event);
-      this.#detailAction?.();
-    });
-    for (const button of [this.coverButton, this.detailButton]) {
-      for (const name of ["pointerdown", "mousedown", "mouseup", "pointerup"]) {
-        button.addEventListener(name, (event) => this.stopEvent(event), true);
-      }
-    }
+    this.bindButton(this.coverButton, () => this.#coverAction);
+    this.bindButton(this.detailButton, () => this.#detailAction);
     this.layer.append(this.coverButton, this.detailButton);
     this.root.appendChild(this.layer);
   }
@@ -65,6 +54,7 @@ export class OverlayUi {
       .cover-button { width: 32px; height: 32px; border-radius: 50%; color: rgba(255,255,255,.96); background: rgba(0,0,0,.58); box-shadow: 0 2px 8px rgba(0,0,0,.28); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .08s, transform .15s, background .15s; }
       .cover-button.visible { opacity: 1; visibility: visible; pointer-events: auto; }
       .cover-button:hover { transform: scale(1.12); background: rgba(0,0,0,.78); }
+      .cover-button.pressed, .detail-button.pressed { animation: acknowledge .18s ease-out; }
       .cover-button.active { color: #00aeec; background: rgba(0,174,236,.26); }
       .cover-button.loading svg, .detail-button.loading svg { animation: pulse .75s ease-in-out infinite alternate; }
       .detail-button { width: 28px; height: 28px; min-width: 28px; min-height: 28px; color: rgba(24,25,28,.9); background: transparent; border-radius: 50%; visibility: hidden; pointer-events: none; transition: transform .15s, background .15s; }
@@ -80,6 +70,7 @@ export class OverlayUi {
       .folder { display: block; width: 100%; margin: 0 0 8px; padding: 12px 14px; border: 0; border-radius: 9px; color: #18191c; background: #f1f2f3; text-align: left; cursor: pointer; }
       .folder:hover, .folder:focus-visible { color: #fff; background: #00a1d6; outline: none; }
       @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
+      @keyframes acknowledge { 50% { filter: brightness(1.65); } }
     `;
     return style;
   }
@@ -99,9 +90,30 @@ export class OverlayUi {
     event.stopImmediatePropagation();
   }
 
+  private bindButton(button: HTMLButtonElement, action: () => (() => void) | null): void {
+    const acknowledge = () => {
+      button.classList.remove("pressed");
+      void button.offsetWidth;
+      button.classList.add("pressed");
+      window.setTimeout(() => button.classList.remove("pressed"), 180);
+    };
+    button.addEventListener("click", (event) => {
+      this.stopEvent(event);
+      acknowledge();
+      action()?.();
+    });
+    for (const name of ["pointerdown", "mousedown", "mouseup", "pointerup"]) {
+      button.addEventListener(name, (event) => this.stopEvent(event), true);
+    }
+  }
+
   private renderButton(button: HTMLButtonElement, snapshot: FavoriteSnapshot): void {
     const size = Number(button.dataset.iconSize) || 20;
-    button.innerHTML = bookmarkSvg(snapshot.active, size);
+    const activeKey = String(snapshot.active);
+    if (button.dataset.active !== activeKey) {
+      button.innerHTML = bookmarkSvg(snapshot.active, size);
+      button.dataset.active = activeKey;
+    }
     button.classList.toggle("active", snapshot.active);
     button.classList.toggle("loading", snapshot.status === "loading" || snapshot.status === "mutating");
     button.disabled = false;

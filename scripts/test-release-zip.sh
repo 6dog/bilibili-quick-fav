@@ -20,6 +20,11 @@ chrome_pid=""
 cleanup() {
   if [[ -n "$chrome_pid" ]]; then
     kill "$chrome_pid" >/dev/null 2>&1 || true
+    for _ in {1..20}; do
+      kill -0 "$chrome_pid" >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+    kill -KILL "$chrome_pid" >/dev/null 2>&1 || true
     wait "$chrome_pid" >/dev/null 2>&1 || true
   fi
   rm -rf "$test_dir"
@@ -48,4 +53,8 @@ done
 curl -fsS --max-time 2 "http://127.0.0.1:$QFAV_BROWSER_PORT/json/version" >/dev/null
 
 QFAV_EXTENSION_DIR="$test_dir/extension" node scripts/load-extension-browser.mjs
-node scripts/check-extension-browser.mjs --toggle-favorite
+check_args=(--toggle-favorite)
+if [[ "${QFAV_FAVORITE_ONLY:-0}" == "1" ]]; then
+  check_args+=(--favorite-only)
+fi
+node scripts/check-extension-browser.mjs "${check_args[@]}"

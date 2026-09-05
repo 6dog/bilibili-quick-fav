@@ -37,6 +37,23 @@ class MemorySettings extends SettingsRepository {
 }
 
 describe("FavoriteService", () => {
+  it("continues the first toggle after choosing a quick folder", async () => {
+    const api = new FakeApi();
+    const settings = new MemorySettings();
+    settings.value.foldersByMid = {};
+    const service = new FavoriteService(api, settings, {
+      chooseFolder: async (folders) => folders[0] ?? null,
+      showNotice: () => undefined,
+    });
+    const unsubscribe = service.subscribe("BV1abc", () => undefined);
+
+    const result = await service.toggle("BV1abc");
+
+    expect(result).toMatchObject({ status: "active", active: true, configured: true });
+    expect(api.writes).toEqual([{ aid: 99, folderId: "20", active: true }]);
+    unsubscribe();
+  });
+
   it("toggles only the configured quick folder", async () => {
     const api = new FakeApi();
     const notices: string[] = [];

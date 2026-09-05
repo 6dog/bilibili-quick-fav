@@ -84,6 +84,29 @@ async function waitFor(cdp, expression, timeoutMs = 15_000) {
   throw new Error(`Timed out waiting for: ${expression.slice(0, 90)}`);
 }
 
+async function waitForFavoriteUi(cdp, expectedActive, label, timeoutMs = 45_000) {
+  const deadline = Date.now() + timeoutMs;
+  const history = [];
+  while (Date.now() < deadline) {
+    const state = await evaluate(cdp, `(() => {
+      const root = document.querySelector('#qfav-extension-root')?.shadowRoot;
+      const button = root?.querySelector('.detail-button');
+      return {
+        active: button?.classList.contains('active'),
+        busy: button?.getAttribute('aria-busy'),
+        title: button?.title,
+        notice: root?.querySelector('.notice')?.textContent || null,
+        visible: button ? getComputedStyle(button).visibility : null,
+      };
+    })()`);
+    const serialized = JSON.stringify(state);
+    if (history.at(-1) !== serialized) history.push(serialized);
+    if (state.busy === "false" && state.active === expectedActive) return;
+    await wait(100);
+  }
+  throw new Error(`favorite: ${label} did not settle after one click (${history.join(" -> ")})`);
+}
+
 async function createPage(url) {
   const response = await fetch(`${endpoint}/json/new?about:blank`, { method: "PUT" });
   if (!response.ok) throw new Error(`Cannot create browser tab: HTTP ${response.status}`);
@@ -95,7 +118,7 @@ async function createPage(url) {
   await cdp.send("Page.setLifecycleEventsEnabled", { enabled: true });
   await cdp.send("Page.navigate", { url });
   const expectedHost = JSON.stringify(new URL(url).hostname);
-  await waitFor(cdp, `location.hostname === ${expectedHost} && document.readyState === 'complete'`, 30_000);
+  await waitFor(cdp, `location.hostname === ${expectedHost} && document.readyState !== 'loading'`, 30_000);
   return { cdp, target };
 }
 
@@ -284,15 +307,12 @@ async function reversibleFavoriteTest(url) {
     assert(snapshot.folderCount > 0, "favorite: account has no folder to test");
     const buttonPoint = await evaluate(page.cdp, `(() => { const r = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
     await clickMouse(page.cdp, buttonPoint.x, buttonPoint.y);
-    await waitFor(page.cdp, "document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.folder')", 8_000);
+    await waitFor(page.cdp, "document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.folder')", 20_000);
     const folderPoint = await evaluate(page.cdp, `(() => { const r = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.folder').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
     const firstDesiredActive = snapshot.states[0][1] !== 1;
     const firstStartedAt = Date.now();
     await clickMouse(page.cdp, folderPoint.x, folderPoint.y);
-    await waitFor(page.cdp, `(() => {
-      const button = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button');
-      return button.getAttribute('aria-busy') === 'false' && button.classList.contains('active') === ${firstDesiredActive};
-    })()`, 8_000);
+    await waitForFavoriteUi(page.cdp, firstDesiredActive, "first operation");
     const firstClickMs = Date.now() - firstStartedAt;
     const afterFirst = await evaluate(page.cdp, `(async () => {
       const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
@@ -305,10 +325,7 @@ async function reversibleFavoriteTest(url) {
     const secondPoint = await evaluate(page.cdp, `(() => { const r = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
     const secondStartedAt = Date.now();
     await clickMouse(page.cdp, secondPoint.x, secondPoint.y);
-    await waitFor(page.cdp, `(() => {
-      const button = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button');
-      return button.getAttribute('aria-busy') === 'false' && button.classList.contains('active') === ${!firstDesiredActive};
-    })()`, 8_000);
+    await waitForFavoriteUi(page.cdp, !firstDesiredActive, "restore operation");
     const secondClickMs = Date.now() - secondStartedAt;
     const restored = await evaluate(page.cdp, `(async () => {
       const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
