@@ -8,8 +8,8 @@ describe("computeDetailPlacement", () => {
   it("places a confirmed button next to a toolbar below the player", () => {
     expect(computeDetailPlacement(anchor, player, { width: 1200, height: 900 }, false, true)).toEqual({
       visible: true,
-      x: 512,
-      y: 626,
+      x: 508,
+      y: 620,
     });
   });
 

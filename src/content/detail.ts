@@ -3,8 +3,8 @@ import { FavoriteService } from "./favorites";
 import { OverlayUi } from "./overlay";
 import { routeBvid } from "./route";
 
-const BUTTON_SIZE = 28;
-const BUTTON_GAP = 12;
+const BUTTON_SIZE = 40;
+const BUTTON_GAP = 8;
 
 export interface DetailPlacement {
   visible: boolean;

@@ -35,7 +35,7 @@ export class OverlayUi {
     this.layer = document.createElement("div");
     this.layer.className = "layer";
     this.coverButton = this.createButton("cover-button", 20);
-    this.detailButton = this.createButton("detail-button", 28);
+    this.detailButton = this.createButton("detail-button", 26);
     this.bindButton(this.coverButton, () => this.#coverAction);
     this.bindButton(this.detailButton, () => this.#detailAction);
     this.layer.append(this.coverButton, this.detailButton);
@@ -54,14 +54,17 @@ export class OverlayUi {
       .cover-button { width: 32px; height: 32px; border-radius: 50%; color: rgba(255,255,255,.96); background: rgba(0,0,0,.58); box-shadow: 0 2px 8px rgba(0,0,0,.28); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .08s, transform .15s, background .15s; }
       .cover-button.visible { opacity: 1; visibility: visible; pointer-events: auto; }
       .cover-button:hover { transform: scale(1.12); background: rgba(0,0,0,.78); }
-      .cover-button.pressed, .detail-button.pressed { animation: acknowledge .18s ease-out; }
+      .cover-button.pressed { animation: cover-acknowledge .18s ease-out; }
       .cover-button.active { color: #00aeec; background: rgba(0,174,236,.26); }
       .cover-button.loading svg, .detail-button.loading svg { animation: pulse .75s ease-in-out infinite alternate; }
-      .detail-button { width: 28px; height: 28px; min-width: 28px; min-height: 28px; color: rgba(24,25,28,.9); background: transparent; border-radius: 50%; visibility: hidden; pointer-events: none; transition: transform .15s, background .15s; }
+      .detail-button { width: 40px; height: 40px; min-width: 40px; min-height: 40px; color: #61666d; background: transparent; border-radius: 50%; visibility: hidden; pointer-events: none; transition: color .12s ease, background-color .12s ease; }
       .detail-button.visible { visibility: visible; pointer-events: auto; }
-      .detail-button:hover { transform: scale(1.1); background: rgba(24,25,28,.08); }
-      .detail-button.dark { color: rgba(255,255,255,.96); filter: drop-shadow(0 1px 2px rgba(0,0,0,.45)); }
+      .detail-button:hover { color: #18191c; background: rgba(24,25,28,.06); }
+      .detail-button:focus-visible { outline: 2px solid rgba(0,174,236,.5); outline-offset: 1px; }
+      .detail-button.dark { color: #e3e5e7; }
+      .detail-button.dark:hover { color: #fff; background: rgba(255,255,255,.12); }
       .detail-button.active { color: #00aeec; filter: none; }
+      .detail-button.pressed { animation: detail-acknowledge .18s ease-out; }
       .notice { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); max-width: min(430px, calc(100vw - 32px)); padding: 10px 14px; border-radius: 9px; color: #fff; background: rgba(24,25,28,.94); box-shadow: 0 4px 16px rgba(0,0,0,.22); font-size: 14px; line-height: 20px; pointer-events: none; }
       .backdrop { position: fixed; inset: 0; display: grid; place-items: center; width: 100vw; height: 100vh; padding: 20px; background: rgba(0,0,0,.5); pointer-events: auto; }
       .dialog { width: min(420px, 100%); max-height: 72vh; overflow: auto; padding: 22px; border-radius: 14px; color: #18191c; background: #fff; box-shadow: 0 16px 50px rgba(0,0,0,.3); }
@@ -70,7 +73,8 @@ export class OverlayUi {
       .folder { display: block; width: 100%; margin: 0 0 8px; padding: 12px 14px; border: 0; border-radius: 9px; color: #18191c; background: #f1f2f3; text-align: left; cursor: pointer; }
       .folder:hover, .folder:focus-visible { color: #fff; background: #00a1d6; outline: none; }
       @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
-      @keyframes acknowledge { 50% { filter: brightness(1.65); } }
+      @keyframes cover-acknowledge { 50% { filter: brightness(1.65); } }
+      @keyframes detail-acknowledge { 50% { transform: scale(.9); } }
     `;
     return style;
   }
