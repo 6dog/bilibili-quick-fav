@@ -85,13 +85,14 @@ export class DetailController {
   #player: HTMLElement | null = null;
   #snapshot: FavoriteSnapshot | null = null;
   #unsubscribe: (() => void) | null = null;
-  #resize = new ResizeObserver(() => this.beginStabilization());
+  #resize = new ResizeObserver(() => this.onObservedResize());
   #observer = new MutationObserver(() => this.scheduleRefresh());
   #frame = 0;
   #refreshFrame = 0;
   #settleUntil = 0;
   #stableFrames = 0;
   #lastSignature = "";
+  #scrollingUntil = 0;
 
   constructor(
     readonly service: FavoriteService,
@@ -186,7 +187,18 @@ export class DetailController {
     if (settling) this.scheduleLayout();
   }
 
-  readonly onScroll = (): void => this.scheduleLayout();
+  private onObservedResize(): void {
+    if (performance.now() < this.#scrollingUntil) this.scheduleLayout();
+    else this.beginStabilization();
+  }
+
+  readonly onScroll = (): void => {
+    this.#scrollingUntil = performance.now() + 180;
+    this.#settleUntil = 0;
+    this.#stableFrames = 4;
+    this.#lastSignature = this.signature();
+    this.layout();
+  };
   readonly onResize = (): void => this.beginStabilization();
 
   private clearRecord(): void {

@@ -7,7 +7,7 @@ import archiver from "archiver";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const extensionRoot = path.join(projectRoot, "dist", "extension");
 const releaseRoot = path.join(projectRoot, "dist", "release");
-const zipPath = path.join(releaseRoot, "bilibili-quick-fav-2.0.3.zip");
+const zipPath = path.join(releaseRoot, "bilibili-quick-fav-2.0.4.zip");
 const fixedDate = new Date("2020-01-01T00:00:00.000Z");
 
 async function collectFiles(directory, prefix = "") {

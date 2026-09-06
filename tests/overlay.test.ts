@@ -14,6 +14,14 @@ function snapshot(status: FavoriteSnapshot["status"]): FavoriteSnapshot {
 describe("favorite button responsiveness", () => {
   beforeEach(() => { document.body.innerHTML = ""; });
 
+  it("keeps overlay controls in the viewport layer", () => {
+    const ui = new OverlayUi();
+    const css = ui.root.querySelector("style")?.textContent ?? "";
+    expect(ui.host.style.position).toBe("fixed");
+    expect(css).toContain(".cover-button, .detail-button { position: fixed;");
+    ui.destroy();
+  });
+
   it("accepts clicks without switching the pointer to a waiting cursor", () => {
     let actions = 0;
     const ui = new OverlayUi();

@@ -181,7 +181,7 @@ async function checkCoverPage(label, url) {
     await waitFor(page.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot");
     await wait(3_000);
     const base = await inspectBase(page.cdp);
-    assert(base.version === "2.0.3", `${label}: extension version marker missing`);
+    assert(base.version === "2.0.4", `${label}: extension version marker missing`);
     assert(base.runtime === "chrome-extension", `${label}: wrong runtime`);
     assert(base.directBodyChild && base.shadow, `${label}: Shadow DOM isolation missing`);
     assert(base.coverButtonCount === 1, `${label}: expected one reusable cover button`);
@@ -262,7 +262,7 @@ async function checkVideoPage(url) {
     await waitFor(page.cdp, "document.querySelector('.bpx-player-video-wrap video,#bilibili-player video')", 30_000);
     await wait(4_500);
     const base = await inspectBase(page.cdp);
-    assert(base.version === "2.0.3" && base.detailButtonCount === 1, "video: extension/detail marker missing");
+    assert(base.version === "2.0.4" && base.detailButtonCount === 1, "video: extension/detail marker missing");
     assert(!base.oldUserscriptPresent, "video: old userscript is also active");
     const initial = await evaluate(page.cdp, `(() => {
       const video = document.querySelector('.bpx-player-video-wrap video,#bilibili-player video');
@@ -274,6 +274,70 @@ async function checkVideoPage(url) {
     assert(Math.abs(initial.rate - 1.5) < .01, `video: expected 1.5x, got ${initial.rate}`);
     assert(initial.visible, "video: detail button is not safely visible");
     assert(initial.player && initial.button.top >= initial.player.bottom - 2, "video: detail button is not below player");
+
+    await waitFor(page.cdp, `document.documentElement.scrollHeight > innerHeight + 800`, 30_000);
+    const scrollSamples = [];
+    let toolbarLeftViewport = false;
+    for (let index = 0; index < 24; index += 1) {
+      const sample = await evaluate(page.cdp, `(() => {
+        const before = scrollY;
+        scrollTo({ top: before + 120, behavior: 'instant' });
+        return { before, after: scrollY };
+      })()`);
+      const frame = await evaluate(page.cdp, `(async () => {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        const root = document.querySelector('#qfav-extension-root')?.shadowRoot;
+        const button = root?.querySelector('.detail-button');
+        const anchor = document.querySelector('.video-toolbar-left')?.getBoundingClientRect();
+        const rect = button?.getBoundingClientRect();
+        return {
+          scrollY,
+          viewportHeight: innerHeight,
+          anchor: anchor && { top: anchor.top, bottom: anchor.bottom, right: anchor.right },
+          button: rect && { top: rect.top, bottom: rect.bottom, left: rect.left },
+          visible: button ? getComputedStyle(button).visibility === 'visible' : false,
+        };
+      })()`);
+      if (frame.anchor && frame.button && frame.anchor.top >= 2 && frame.anchor.bottom <= frame.viewportHeight) {
+        const expectedTop = frame.anchor.top + (frame.anchor.bottom - frame.anchor.top - 40) / 2;
+        assert(frame.visible, `video: detail button flickered off during safe scroll (${JSON.stringify(frame)})`);
+        assert(Math.abs(frame.button.top - expectedTop) <= 1 && Math.abs(frame.button.left - (frame.anchor.right + 8)) <= 1,
+          `video: detail button lagged behind toolbar during scroll (${JSON.stringify(frame)})`);
+      }
+      await wait(70);
+      const rendered = await evaluate(page.cdp, `(() => {
+        const root = document.querySelector('#qfav-extension-root')?.shadowRoot;
+        const button = root?.querySelector('.detail-button');
+        const anchor = document.querySelector('.video-toolbar-left')?.getBoundingClientRect();
+        const rect = button?.getBoundingClientRect();
+        return {
+          scrollY,
+          anchor: anchor && { top: anchor.top, bottom: anchor.bottom, right: anchor.right },
+          button: rect && { top: rect.top, bottom: rect.bottom, left: rect.left },
+          visible: button ? getComputedStyle(button).visibility === 'visible' : false,
+        };
+      })()`);
+      if (rendered.anchor && rendered.button && rendered.anchor.top >= 2 && rendered.anchor.bottom <= frame.viewportHeight) {
+        assert(rendered.visible, `video: detail button flickered after scroll (${JSON.stringify(rendered)})`);
+      }
+      scrollSamples.push({ frame, settled: rendered });
+      if (rendered.anchor?.bottom <= 0) {
+        toolbarLeftViewport = true;
+        assert(!rendered.visible, `video: detail button remained visible after toolbar left viewport (${JSON.stringify(scrollSamples)})`);
+        break;
+      }
+      if (sample.after === sample.before) break;
+    }
+    if (!toolbarLeftViewport) {
+      const scrollContainers = await evaluate(page.cdp, `(() => [...document.querySelectorAll('*')]
+        .filter(element => element.scrollHeight > element.clientHeight + 100)
+        .map(element => { const style = getComputedStyle(element); return { tag: element.tagName, id: element.id, className: String(element.className).slice(0, 100), overflowY: style.overflowY, clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop }; })
+        .filter(item => item.overflowY === 'auto' || item.overflowY === 'scroll')
+        .slice(0, 12))()`);
+      throw new Error(`video: could not scroll toolbar out of viewport (${JSON.stringify({ scrollSamples, scrollContainers })})`);
+    }
+    await evaluate(page.cdp, `scrollTo(0, 0)`);
+    await waitFor(page.cdp, `document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.detail-button.visible')`, 5_000);
 
     await evaluate(page.cdp, `(() => { const video = document.querySelector('.bpx-player-video-wrap video,#bilibili-player video'); video.playbackRate = 2; })()`);
     await wait(2_000);
@@ -374,7 +438,7 @@ async function main() {
   const version = await fetch(`${endpoint}/json/version`).then((response) => response.json()).catch(() => null);
   if (!version) throw new Error(`No Chrome DevTools endpoint on port ${port}`);
   const results = [];
-  const videoUrl = "https://www.bilibili.com/video/BV11ohV68EP8/";
+  const videoUrl = "https://www.bilibili.com/video/BV1AxtJ6NEFR/";
   if (!favoriteOnly) {
     results.push(await checkCoverPage("home", "https://www.bilibili.com/"));
     results.push(await checkCoverPage("popular", "https://www.bilibili.com/v/popular/all/"));
