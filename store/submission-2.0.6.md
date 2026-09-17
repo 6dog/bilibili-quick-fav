@@ -1,11 +1,12 @@
-# Chrome Web Store 2.0.5 提交资料
+# Chrome Web Store 2.0.6 提交资料
 
 ## 冻结包
 
-- 上传文件：`dist/release/bilibili-quick-fav-2.0.5.zip`
-- SHA-256：`ef581c0e4ba8f7c8f5df1baae59a930e67a465a7ea27296259b6013fdccf9843`
+- 上传文件：`dist/release/bilibili-quick-fav-2.0.6.zip`
+- SHA-256：`26b5ea828ef4cd79ee9896a79adc5870b534f720b65fc0da9436114ec13edb8b`
 - ZIP 内 10 个文件：`BUILD_VERSION`、`content.js`、`manifest.json`、4 个 PNG 图标、`popup/index.html`、`popup/popup.css`、`popup/popup.js`。
-- 运行代码未在真实写入验收后改动；2.0.5 真实收藏测试只更改一个目标收藏夹并恢复。
+- 2.0.6 修复窗口重新获得焦点或其他标签页更改收藏夹设置后，详情按钮因状态停留在“未知”而隐藏的问题。
+- 2.0.6 最终 ZIP 已重新完成真实收藏验收：预检全部目录后，只更改一个目标收藏夹，随后撤销并确认目标及其他目录都恢复原状态。
 
 ## 素材与文案
 

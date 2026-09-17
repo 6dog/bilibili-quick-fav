@@ -37,6 +37,24 @@ class MemorySettings extends SettingsRepository {
 }
 
 describe("FavoriteService", () => {
+  it("reloads subscribed video state after a focus or external setting invalidation", async () => {
+    const api = new FakeApi();
+    const service = new FavoriteService(api, new MemorySettings(), {
+      chooseFolder: async () => null,
+      showNotice: () => undefined,
+    });
+    const observed: string[] = [];
+    const unsubscribe = service.subscribe("BV1abc", (snapshot) => observed.push(snapshot.status));
+    await service.load("BV1abc", "high");
+    service.invalidateContext();
+    expect(service.snapshot("BV1abc").status).toBe("unknown");
+    await service.refreshSubscribed();
+    expect(service.snapshot("BV1abc").status).toBe("inactive");
+    expect(observed.at(-1)).toBe("inactive");
+    expect(api.stateReads).toBe(2);
+    unsubscribe();
+  });
+
   it("continues the first toggle after choosing a quick folder", async () => {
     const api = new FakeApi();
     const settings = new MemorySettings();

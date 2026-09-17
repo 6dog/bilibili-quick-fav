@@ -132,6 +132,13 @@ async function createPage(url) {
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
   await cdp.send("Page.setLifecycleEventsEnabled", { enabled: true });
+  if (process.env.QFAV_VIEWPORT) {
+    const match = process.env.QFAV_VIEWPORT.match(/^(\d+)x(\d+)$/);
+    assert(match, "QFAV_VIEWPORT must be WIDTHxHEIGHT");
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: Number(match[1]), height: Number(match[2]), deviceScaleFactor: 1, mobile: false,
+    });
+  }
   await cdp.send("Page.navigate", { url });
   await cdp.send("Page.bringToFront");
   const expectedHost = JSON.stringify(new URL(url).hostname);
@@ -283,8 +290,30 @@ async function checkVideoPage(url) {
   const page = await createPage(url);
   try {
     await waitFor(page.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot");
+    if (process.argv.includes("--detail-diagnostics")) {
+      await wait(8_000);
+      const diagnostic = await evaluate(page.cdp, `(() => {
+        const rect = (element) => { const r = element?.getBoundingClientRect(); return r && { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }; };
+        const root = document.querySelector('#qfav-extension-root')?.shadowRoot;
+        const button = root?.querySelector('.detail-button');
+        return {
+          url: location.href, viewport: { width: innerWidth, height: innerHeight },
+          host: Boolean(root), button: { classes: button?.className, rect: rect(button), visibility: button && getComputedStyle(button).visibility, busy: button?.getAttribute('aria-busy') },
+          anchors: [...document.querySelectorAll('.video-toolbar-left,.video-toolbar,#toolbar_module,.video-info-detail')].slice(0, 8).map(element => ({ selector: element.className || element.id, rect: rect(element) })),
+          players: [...document.querySelectorAll('#bilibili-player,.bpx-player-container,.bpx-player-primary-area,.bilibili-player-video')].slice(0, 8).map(element => ({ selector: element.className || element.id, rect: rect(element) })),
+        };
+      })()`);
+      return { label: "detail-diagnostics", diagnostic };
+    }
     await waitFor(page.cdp, "document.querySelector('.bpx-player-video-wrap video,#bilibili-player video')", 30_000);
     await wait(4_500);
+    if (process.argv.includes("--focus-diagnostics")) {
+      const before = await evaluate(page.cdp, `document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.detail-button')?.classList.contains('visible')`);
+      await evaluate(page.cdp, `window.dispatchEvent(new Event('focus'))`);
+      await wait(3_000);
+      const after = await evaluate(page.cdp, `document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.detail-button')?.classList.contains('visible')`);
+      return { label: "focus-diagnostics", before, after };
+    }
     const base = await inspectBase(page.cdp);
     assert(base.version === expectedVersion && base.detailButtonCount === 1, "video: extension/detail marker missing");
     assert(!base.oldUserscriptPresent, "video: old userscript is also active");
@@ -416,7 +445,12 @@ async function checkVideoPage(url) {
     assert(fullscreenHidden, "video: extension UI remained visible in fullscreen");
     await evaluate(page.cdp, `document.exitFullscreen()`, true);
     await wait(700);
-    return { label: "video", version: base.version, rate: "1.5/pass", manualRate: "2.0/pass", semanticRoute: "pass", fullscreen: "pass", detail: "pass" };
+    await evaluate(page.cdp, `window.dispatchEvent(new Event('focus'))`);
+    await waitFor(page.cdp, `(() => {
+      const button = document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.detail-button');
+      return button?.classList.contains('visible') && button.getAttribute('aria-busy') === 'false';
+    })()`, 12_000);
+    return { label: "video", version: base.version, rate: "1.5/pass", manualRate: "2.0/pass", semanticRoute: "pass", fullscreen: "pass", detail: "pass", focusRecovery: "pass" };
   } finally {
     await closePage(page);
   }
@@ -618,7 +652,7 @@ async function main() {
   const version = await fetch(`${endpoint}/json/version`).then((response) => response.json()).catch(() => null);
   if (!version) throw new Error(`No Chrome DevTools endpoint on port ${port}`);
   const results = [];
-  const videoUrl = "https://www.bilibili.com/video/BV1AxtJ6NEFR/";
+  const videoUrl = process.env.QFAV_TEST_URL || "https://www.bilibili.com/video/BV1AxtJ6NEFR/";
   if (!favoriteOnly && !videoOnly) {
     results.push(await checkCoverPage("home", "https://www.bilibili.com/"));
     results.push(await checkCoverPage("popular", "https://www.bilibili.com/v/popular/all/"));

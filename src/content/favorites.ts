@@ -115,6 +115,10 @@ export class FavoriteService {
     this.invalidateAll();
   }
 
+  async refreshSubscribed(): Promise<void> {
+    await Promise.all([...this.#subscribers.keys()].map((bvid) => this.load(bvid, "high", true)));
+  }
+
   private async aid(bvid: string, epoch: number): Promise<number> {
     const cached = this.#aidCache.get(bvid);
     if (cached) return cached;

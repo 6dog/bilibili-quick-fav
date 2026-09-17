@@ -42,6 +42,11 @@ async function start(): Promise<void> {
   });
   routes.start();
 
+  const refreshFavoriteContext = () => {
+    service.invalidateContext();
+    void service.refreshSubscribed();
+  };
+
   let legacyActive = false;
   const stopIfLegacy = () => {
     if (legacyActive || !document.getElementById("qfav-overlay-host")) return;
@@ -68,10 +73,10 @@ async function start(): Promise<void> {
       if (!key.startsWith(FOLDER_KEY_PREFIX)) return false;
       return !service.isOwnFolderChange(key.slice(FOLDER_KEY_PREFIX.length), change.newValue);
     })) {
-      service.invalidateContext();
+      refreshFavoriteContext();
     }
   });
-  window.addEventListener("focus", () => service.invalidateContext());
+  window.addEventListener("focus", refreshFavoriteContext);
 
   chrome.runtime.onMessage.addListener(
     (request: PopupRequest, _sender, sendResponse: (response: PopupResponse) => void) => {
