@@ -1,153 +1,46 @@
-# bilibili-quick-fav
+# B站快捷收藏与默认倍速
 
-[![version](https://img.shields.io/badge/version-1.75-blue.svg)](./bilibili-quick-fav.user.js)
-[![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
-
-给 B 站加两个顺手功能：
-
-- 视频封面载入时提前准备书签按钮，鼠标悬停立即显示并可一键收藏
-- 播放页默认 1.5 倍速，并尊重手动切换
-
-## 安装
-
-1. 安装用户脚本管理器：[Tampermonkey](https://www.tampermonkey.net/) 或 [Violentmonkey](https://violentmonkey.github.io/)
-2. 打开 [`bilibili-quick-fav.user.js`](./bilibili-quick-fav.user.js)
-3. 点击 `Raw` 安装
-
-### 自动更新
-
-v1.62 起脚本内置 GitHub Raw 更新地址。Tampermonkey 会按扩展设置中的
-检查周期读取远程 `@version`；发现更高版本后自动下载更新。安装一次 v1.62
-后，后续版本不再需要重复打开 Raw 页面。
-
-v1.63 将收藏按钮迁移到独立 Shadow DOM 浮层，不再向 B 站管理的视频卡片、
-详情工具栏或顶部栏写入子元素、属性和样式，避免 SPA 重挂载时出现顶部空栏。
-
-v1.65 播放页面只保留播放器下方操作栏旁的详情快捷收藏按钮，不再给右侧推荐、
-合集等封面重复显示悬停收藏按钮。
-
-v1.66 恢复播放页右侧推荐、合集封面的悬停收藏按钮；进入网页全屏或系统全屏时
-自动隐藏整个快捷收藏浮层，退出全屏后恢复，避免遮挡播放器控制图标。
-
-v1.67 同时隐藏全屏画面中误穿透的 B 站原生固定侧栏/迷你播放器按钮，退出全屏
-后自动恢复，不影响普通页面的迷你播放器入口。
-
-v1.68 将隐藏规则直接绑定 B 站网页全屏类和浏览器全屏状态，消除切换全屏时等待
-脚本下一帧更新造成的短暂图标残留，并保留尺寸判断作为兜底。
-
-v1.69 修复详情收藏按钮的边缘夹取：工具栏滑出视口或切换宽屏时，按钮随之隐藏，
-不再被强行挪到视频字幕附近；回到普通模式后恢复原位置。
-
-v1.70 合并封面与详情收藏按钮的状态加载、点击和图标更新流程，精简重复样式、
-页面扫描与浏览器回归输出；功能与页面行为保持不变。
-
-v1.71–v1.72 补充网页宽屏识别，并禁止详情收藏按钮与播放器画面重叠。
-
-v1.73 改为严格失败关闭：详情按钮只允许出现在播放器下方的有效工具栏旁；布局
-变化时先隐藏并持续跟踪到稳定。同步修复收藏状态误确认、请求超时、顶部栏等待、
-高频播放器 DOM 扫描和测试未强制失败的问题。
-
-v1.74 优化详情收藏按钮的滚动观感：按钮在工具栏仍处于安全可视区域时逐帧跟随，
-不再每次滚动都隐藏并等待；离屏、与播放器重叠或进入全屏时仍会立即隐藏。
-
-v1.75 全面收紧封面收藏按钮的显示边界：只有鼠标位于真实视频封面时才显示，标题、
-作者和卡片空白区域不再误触发；滚动、布局变化、离开页面或切到后台时立即收起，
-加载状态也不会在离开封面后残留。详情页按钮仍保持 v1.74 的平滑滚动跟随。
-
-自动更新只会获取 `main` 分支已经发布的版本，本地尚未推送的修改不会进入
-你的浏览器。
+这是原油猴脚本的 Chrome Manifest V3 重写版。2.0 起只维护 Chrome 扩展，旧的
+`bilibili-quick-fav.user.js` 仅作为 Legacy 回退保留。
 
 ## 功能
 
-### 一键收藏
+- 在可识别普通 BVID 的真实视频封面上，悬停显示快捷收藏按钮。
+- 收藏和取消只作用于你选定的“快捷收藏夹”，不会修改其他收藏夹。
+- 视频详情页在播放器下方提供同一套快捷收藏按钮。
+- 普通视频默认使用 1.5 倍速；当前视频手动调速后不再抢回，切换到下一个视频或分 P 后重新应用默认值。
+- 不处理直播、文章、广告、首页静音预览和无法映射到普通 BVID 的活动卡片。
 
-- 视频卡片悬停时，左上角显示书签按钮
-- 点击收藏到你预先选择的快捷收藏夹
-- 再点一次即可取消收藏
-- 视频详情页工具栏旁也会显示同样的快捷收藏按钮
-- 播放页右侧推荐、合集封面仍支持悬停收藏，全屏播放时自动隐藏
+## 本地安装
 
-### 默认倍速
+1. 安装 Node.js 22.12 以上的 22.x 版本，或 Node.js 24 及以上版本。
+2. 在项目目录运行 `npm install` 和 `npm run package`。
+3. 打开 Chrome 的 `chrome://extensions`，启用“开发者模式”。
+4. 点击“加载已解压的扩展程序”，选择 `dist/extension`。
+5. 禁用旧版油猴脚本，避免两个版本同时注入。
 
-- 视频页默认切到 `1.5x`
-- 切换分 P、清晰度或播放器重置后会自动补回
-- 如果你手动选了别的倍速，当前视频不再强制接管
+首次点击收藏按钮时会要求选择快捷收藏夹。也可以点击 Chrome 工具栏中的扩展图标重新选择，并开关默认倍速。
 
-## 支持页面
+## 开发与验证
 
-- 首页、热门、排行榜
-- 搜索结果、分区页、用户主页
-- 动态页、收藏夹页
-- 视频详情页、合集、多 P
+- `npm run typecheck`：TypeScript 类型检查。
+- `npm test`：单元和 DOM 测试。
+- `npm run package`：生成扩展目录和确定性商店 ZIP。
+- `npm run check`：依次执行上述完整本地门禁。
+- `npm run test:release`：从待上传 ZIP 临时安装并执行只读浏览器门禁，不修改真实收藏。
+- `npm run test:release:write`：仅在已授权的隔离账号中执行一次加入与撤销；自动选用首次使用时未收藏的目录，或已配置的目标目录。可设置 `QFAV_TEST_FOLDER_ID=收藏夹ID` 限定目录。脚本预检所有目录状态，只恢复本次目标目录。
 
-## 自定义
+最终上传文件位于 `dist/release/bilibili-quick-fav-<版本号>.zip`。商店审核使用的版本应当重新从该 ZIP 安装并完成真实浏览器验收。商店截图须取自实际运行页面，不使用示意图。
+商店截图来自隔离 Chrome 中安装该 ZIP 后的真实页面：`assets/store-cover.png` 展示封面悬停按钮，`assets/store-picker.png` 展示首次选择框，`assets/store-screenshot.png` 展示视频详情页。若页面或界面改变，应重新截取并核对。
 
-可以直接修改脚本顶部常量：
+## 隐私
 
-```js
-const DEFAULT_PLAYBACK_RATE = 1.5;
-const ENABLE_DEFAULT_RATE = true;
-const PLAYBACK_BOOTSTRAP_DELAY_MS = 1500;
-```
+本扩展没有广告、分析、远程代码或开发者服务器。详见 [PRIVACY.md](PRIVACY.md)。
 
-## 专用测试浏览器
+## Legacy 油猴版
 
-为了避免自动化测试影响日常 Chrome，可以使用独立测试 profile：
+旧版 `bilibili-quick-fav.user.js` 保留为只读回退，不迁移 GM 存储，也不再发布功能更新。Chrome 扩展首次使用时需要重新选择快捷收藏夹。
 
-```bash
-# 第一次：打开可见窗口，登录 B 站并安装/确认脚本
-scripts/open-test-browser.sh
+## 反馈与许可
 
-# 之后：启动同一份 profile 的无头浏览器
-scripts/start-headless-browser.sh
-
-# 检查无头浏览器是否已登录、脚本是否生效
-scripts/check-test-browser.js
-
-# 注入当前工作区脚本，检查 Shadow DOM、顶部栏和悬停显示
-scripts/check-test-browser.js --inject-local-script
-
-# 直接从 GitHub Raw 读取公开版本到内存并运行同一套门禁
-scripts/check-test-browser.js --inject-public-script
-
-# 可选：检查布局全过程、语义路由和用户手动改速
-scripts/check-test-browser.js --inject-local-script --probe-layout-timeline --probe-detail-edge --probe-fullscreen
-scripts/check-test-browser.js --inject-local-script --probe-semantic-route --probe-manual-rate
-
-# 检查封面命中边界、滚动收起和离开页面收起
-scripts/check-test-browser.js --inject-local-script --probe-cover-boundary
-
-# 会真实切换收藏并恢复测试前的全部收藏夹状态，仅在明确授权后执行
-scripts/check-test-browser.js --inject-local-script --toggle-detail-favorite
-```
-
-默认 profile 存在 `~/.codex-browsers/bilibili-quick-fav`，不会提交到 Git；无头浏览器默认静音。
-
-## 常见问题
-
-**按钮没反应**
-
-请先确认已经登录 B 站。收藏接口依赖登录态。
-
-**想重新选择快捷收藏夹**
-
-在 Tampermonkey 管理面板打开本脚本的“存储”页，删除 `qfav_folder_id`；下次点击
-快捷收藏时会重新弹出收藏夹选择窗口。
-
-**不想启用默认倍速**
-
-把 `ENABLE_DEFAULT_RATE` 改成 `false`，或者把 `DEFAULT_PLAYBACK_RATE` 改成 `1`。
-
-## 说明
-
-- 请求只会发往 `api.bilibili.com`
-- 本地只保存快捷收藏夹 ID
-- 单文件脚本，无构建步骤
-
-## 反馈
-
-有问题或新需求，欢迎提 [Issue](https://github.com/6dog/bilibili-quick-fav/issues)。
-
-## License
-
-[MIT](./LICENSE)
+有问题可提交 [Issue](https://github.com/6dog/bilibili-quick-fav/issues)。本项目使用 [MIT License](LICENSE)。

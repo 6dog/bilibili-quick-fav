@@ -425,7 +425,7 @@
 
   function bookmarkSvg(filled, dark = false, size = 20) {
     const activeColor = "#00aeec"; // B 站主题蓝
-    const idleStroke = dark ? "rgba(24,25,28,0.55)" : "rgba(255,255,255,0.9)";
+    const idleStroke = "currentColor";
     const stroke = filled ? activeColor : idleStroke;
     const fill = filled ? activeColor : "none";
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${fill}" stroke="${stroke}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -554,6 +554,7 @@
         width: 32px;
         height: 32px;
         border-radius: 50%;
+        color: rgba(255, 255, 255, 0.96);
         background: rgba(0, 0, 0, 0.55);
         opacity: 0;
         transition: opacity 0.08s, transform 0.15s;
@@ -571,6 +572,7 @@
         background: rgba(0, 0, 0, 0.75);
       }
       .qfav-btn.qfav-active {
+        color: #00aeec;
         background: rgba(0, 174, 236, 0.22);
       }
       .qfav-btn.qfav-active:hover {
@@ -593,7 +595,9 @@
         height: 28px !important;
         min-width: 28px;
         min-height: 28px;
+        color: rgba(24, 25, 28, 0.9);
         background: transparent;
+        border-radius: 50%;
         padding: 0 !important;
         transition: transform 0.15s;
         margin: 0 !important;
@@ -604,9 +608,18 @@
       }
       .qfav-detail-btn:hover {
         transform: scale(1.1);
+        background: rgba(24, 25, 28, 0.08);
+      }
+      .qfav-detail-btn.qfav-on-dark {
+        color: rgba(255, 255, 255, 0.96);
+        filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+      }
+      .qfav-detail-btn.qfav-on-dark:hover {
+        background: rgba(255, 255, 255, 0.14);
       }
       .qfav-detail-btn.qfav-active {
         color: #00aeec;
+        filter: none;
       }
       .qfav-detail-btn.qfav-loading {
         pointer-events: none;
@@ -953,6 +966,33 @@
     record.button.style.top = `${Math.round(rect.top + 8)}px`;
   }
 
+  function parseCssRgb(color) {
+    const match = color?.match(
+      /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i,
+    );
+    if (!match) return null;
+    return {
+      r: Number(match[1]),
+      g: Number(match[2]),
+      b: Number(match[3]),
+      a: match[4] === undefined ? 1 : Number(match[4]),
+    };
+  }
+
+  function isDarkSurface(element) {
+    for (let current = element; current; current = current.parentElement) {
+      const background = parseCssRgb(getComputedStyle(current).backgroundColor);
+      if (!background || background.a < 0.5) continue;
+      const luminance =
+        (0.2126 * background.r +
+          0.7152 * background.g +
+          0.0722 * background.b) /
+        255;
+      return luminance < 0.5;
+    }
+    return matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
   function positionDetailRecord() {
     if (!detailRecord) return;
     const { anchor, button, generation } = detailRecord;
@@ -979,6 +1019,7 @@
       toolbarBelowPlayer;
     button.style.visibility = visible ? "visible" : "hidden";
     if (!visible) return;
+    button.classList.toggle("qfav-on-dark", isDarkSurface(anchor));
     button.style.left = `${x}px`;
     button.style.top = `${y}px`;
   }

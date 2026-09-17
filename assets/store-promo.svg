@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="280" viewBox="0 0 440 280">
+  <defs>
+    <linearGradient id="bg" x1="20" y1="20" x2="420" y2="260" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4FCFF"/>
+      <stop offset="1" stop-color="#D8F3FF"/>
+    </linearGradient>
+  </defs>
+  <rect width="440" height="280" rx="24" fill="url(#bg)"/>
+  <rect x="32" y="40" width="136" height="92" rx="14" fill="#2A3540"/>
+  <path d="M50 55h30a4 4 0 0 1 4 4v43L65 91l-19 11V59a4 4 0 0 1 4-4Z" fill="#00AEEC"/>
+  <circle cx="145" cy="58" r="18" fill="#00AEEC"/>
+  <path d="M139 50h12a2 2 0 0 1 2 2v16l-8-5-8 5V52a2 2 0 0 1 2-2Z" fill="#fff"/>
+  <text x="32" y="177" fill="#14212B" font-family="Arial, PingFang SC, sans-serif" font-size="29" font-weight="700">B站快捷收藏</text>
+  <text x="32" y="216" fill="#415363" font-family="Arial, PingFang SC, sans-serif" font-size="20">封面悬停一键收藏 · 默认 1.5×</text>
+  <rect x="301" y="53" width="104" height="104" rx="28" fill="#00AEEC"/>
+  <text x="353" y="118" fill="#fff" font-family="Arial, sans-serif" font-size="35" font-weight="700" text-anchor="middle">1.5×</text>
+</svg>
