@@ -32,4 +32,20 @@ describe("favoriteMutationBody", () => {
     await rejection;
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("does not fetch with a signal that was already cancelled", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(new BiliApi().getViewerMid(controller.signal)).rejects.toMatchObject({ kind: "cancelled" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("treats missing favorite state as unknown and never as false", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      code: 0, data: { list: [{ id: 20, title: "快捷" }] },
+    }), { status: 200 })));
+    await expect(new BiliApi().getFolderState("10", 99, "20")).rejects.toMatchObject({ kind: "invalid" });
+  });
 });

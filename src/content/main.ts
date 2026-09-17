@@ -1,6 +1,6 @@
 import type { PopupRequest, PopupResponse } from "../shared/types";
 import { DEFAULT_PLAYBACK_RATE, EXTENSION_VERSION } from "../shared/types";
-import { SettingsRepository } from "../shared/settings";
+import { FOLDER_KEY_PREFIX, PLAYBACK_KEY, SETTINGS_KEY, SettingsRepository } from "../shared/settings";
 import { BiliApi } from "./api";
 import { CoverController } from "./covers";
 import { DetailController } from "./detail";
@@ -42,10 +42,42 @@ async function start(): Promise<void> {
   });
   routes.start();
 
+  let legacyActive = false;
+  const stopIfLegacy = () => {
+    if (legacyActive || !document.getElementById("qfav-overlay-host")) return;
+    legacyActive = true;
+    service.invalidateContext();
+    covers.destroy();
+    detail.destroy();
+    playback.destroy();
+    routes.stop();
+    legacyObserver.disconnect();
+    ui.showNotice("检测到旧版油猴脚本，请先禁用旧版再使用扩展");
+  };
+  const legacyObserver = new MutationObserver(stopIfLegacy);
+  legacyObserver.observe(document.body, { childList: true, subtree: true });
+  stopIfLegacy();
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local") return;
+    if (changes[PLAYBACK_KEY] || changes[SETTINGS_KEY]) {
+      void settings.load().then((value) => playback.setEnabled(value.playbackEnabled));
+    }
+    if (Object.entries(changes).some(([key, change]) => {
+      if (key === SETTINGS_KEY) return true;
+      if (!key.startsWith(FOLDER_KEY_PREFIX)) return false;
+      return !service.isOwnFolderChange(key.slice(FOLDER_KEY_PREFIX.length), change.newValue);
+    })) {
+      service.invalidateContext();
+    }
+  });
+  window.addEventListener("focus", () => service.invalidateContext());
+
   chrome.runtime.onMessage.addListener(
     (request: PopupRequest, _sender, sendResponse: (response: PopupResponse) => void) => {
       void (async () => {
         try {
+          if (legacyActive) throw new Error("请先禁用旧版油猴脚本");
           if (request.type === "GET_STATUS") {
             const value = await settings.load();
             sendResponse({ ok: true, status: await service.getExtensionStatus(value.playbackEnabled) });

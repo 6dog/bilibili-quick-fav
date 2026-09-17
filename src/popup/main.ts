@@ -21,7 +21,7 @@ async function send(request: PopupRequest): Promise<PopupResponse> {
 }
 
 function render(status: ExtensionStatus): void {
-  version.textContent = `版本 ${status.version}${status.signedIn ? " · 已登录" : " · 未登录"}`;
+  version.textContent = `版本 ${status.version} · ${status.accountStatus === "error" ? "账号读取失败" : status.signedIn ? "已登录" : "未登录"}`;
   folder.textContent = status.folder?.title ?? "尚未选择";
   playbackToggle.checked = status.playbackEnabled;
   chooseButton.disabled = !status.signedIn;

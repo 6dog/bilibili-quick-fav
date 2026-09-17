@@ -65,7 +65,7 @@ describe("FavoriteService", () => {
     expect(api.stateReads).toBe(1);
     expect((await service.toggle("BV1abc")).active).toBe(true);
     expect(api.writes).toEqual([{ aid: 99, folderId: "20", active: true }]);
-    expect(api.stateReads).toBe(1);
+    expect(api.stateReads).toBe(2);
     expect(notices).toEqual(["已收藏到「快捷」"]);
     expect((await service.toggle("BV1abc")).active).toBe(false);
     expect(api.writes[1]).toEqual({ aid: 99, folderId: "20", active: false });
@@ -133,7 +133,7 @@ describe("FavoriteService", () => {
   it("clears a deleted quick folder so the next click can choose again", async () => {
     class DeletedFolderApi extends FakeApi {
       override async getFolderState(): Promise<boolean> {
-        throw new BiliApiError("快捷收藏夹不存在或已被删除", "invalid");
+        throw new BiliApiError("快捷收藏夹不存在或已被删除", "folder-missing");
       }
     }
     const settings = new MemorySettings();
@@ -146,5 +146,118 @@ describe("FavoriteService", () => {
     expect(settings.value.foldersByMid["10"]).toBeUndefined();
     expect(result.configured).toBe(false);
     expect(notices).toContain("快捷收藏夹已失效，请重新选择");
+  });
+
+  it("does not write after a route change closes the folder picker", async () => {
+    const api = new FakeApi();
+    const settings = new MemorySettings();
+    settings.value.foldersByMid = {};
+    let closePicker: () => void = () => {};
+    let pickerOpened = false;
+    const picker = new Promise<BiliFolder | null>((resolve) => { closePicker = () => resolve(null); });
+    const service = new FavoriteService(api, settings, {
+      chooseFolder: () => { pickerOpened = true; return picker; },
+      cancelFolderPicker: () => closePicker(),
+      showNotice: () => undefined,
+    });
+    const operation = service.toggle("BV1abc");
+    await vi.waitFor(() => expect(pickerOpened).toBe(true));
+    service.resetRoute();
+    await operation;
+    expect(api.writes).toHaveLength(0);
+  });
+
+  it("does not publish a stale state after route reset", async () => {
+    let finishOld: (active: boolean) => void = () => {};
+    class DeferredStateApi extends FakeApi {
+      calls = 0;
+      override async getFolderState(): Promise<boolean> {
+        this.calls += 1;
+        if (this.calls === 1) return new Promise<boolean>((resolve) => { finishOld = resolve; });
+        return true;
+      }
+    }
+    const api = new DeferredStateApi();
+    const service = new FavoriteService(api, new MemorySettings(), { chooseFolder: async () => null, showNotice: () => undefined });
+    const old = service.load("BV1abc");
+    await vi.waitFor(() => expect(api.calls).toBe(1));
+    service.resetRoute();
+    expect((await service.load("BV1abc")).active).toBe(true);
+    finishOld(false);
+    await old;
+    expect(service.snapshot("BV1abc")).toMatchObject({ status: "active", active: true });
+  });
+
+  it("does not let an earlier read overwrite a completed write", async () => {
+    let finishOld: (active: boolean) => void = () => {};
+    class DeferredStateApi extends FakeApi {
+      calls = 0;
+      override async getFolderState(): Promise<boolean> {
+        this.calls += 1;
+        if (this.calls === 1) return new Promise<boolean>((resolve) => { finishOld = resolve; });
+        return this.active;
+      }
+    }
+    const api = new DeferredStateApi();
+    const service = new FavoriteService(api, new MemorySettings(), { chooseFolder: async () => null, showNotice: () => undefined });
+    const old = service.load("BV1abc");
+    await vi.waitFor(() => expect(api.calls).toBe(1));
+    expect((await service.toggle("BV1abc")).active).toBe(true);
+    finishOld(false);
+    await old;
+    expect(service.snapshot("BV1abc")).toMatchObject({ status: "active", active: true });
+  });
+
+  it("keeps settings on malformed state errors and reads again before every write", async () => {
+    class BrokenStateApi extends FakeApi {
+      override async getFolderState(): Promise<boolean> { throw new BiliApiError("missing fav_state", "invalid"); }
+    }
+    const settings = new MemorySettings();
+    const service = new FavoriteService(new BrokenStateApi(), settings, { chooseFolder: async () => null, showNotice: () => undefined });
+    expect((await service.load("BV1abc")).status).toBe("error");
+    expect(settings.value.foldersByMid["10"]?.id).toBe("20");
+    await service.toggle("BV1abc");
+    expect(settings.value.foldersByMid["10"]?.id).toBe("20");
+  });
+
+  it("uses the folder ID when two folders share a title", async () => {
+    class SameNameApi extends FakeApi {
+      override async getFolderState(_mid: string, _aid: number, folderId: string): Promise<boolean> {
+        return folderId === "30";
+      }
+    }
+    const api = new SameNameApi();
+    const settings = new MemorySettings();
+    const service = new FavoriteService(api, settings, { chooseFolder: async () => null, showNotice: () => undefined });
+    expect((await service.load("BV1abc")).active).toBe(false);
+    await settings.setFolder("10", { id: "30", title: "快捷" });
+    service.invalidateContext();
+    await service.toggle("BV1abc");
+    expect(api.writes).toEqual([{ aid: 99, folderId: "30", active: false }]);
+  });
+
+  it("does not publish an old folder write after the picker changes folders", async () => {
+    class DeferredWriteApi extends FakeApi {
+      release: () => void = () => {};
+      gate = new Promise<void>((resolve) => { this.release = resolve; });
+      override async setFolderState(aid: number, folderId: string, active: boolean): Promise<void> {
+        this.writes.push({ aid, folderId, active });
+        await this.gate;
+      }
+      override async getFolderState(): Promise<boolean> { return false; }
+    }
+    const api = new DeferredWriteApi();
+    const notices: string[] = [];
+    const service = new FavoriteService(api, new MemorySettings(), {
+      chooseFolder: async (folders) => folders[1] ?? null,
+      showNotice: (message) => notices.push(message),
+    });
+    const old = service.toggle("BV1abc");
+    await vi.waitFor(() => expect(api.writes).toHaveLength(1));
+    await service.openFolderPicker();
+    api.release();
+    await old;
+    expect(service.snapshot("BV1abc").folderTitle).not.toBe("快捷");
+    expect(notices).not.toContain("已收藏到「快捷」");
   });
 });

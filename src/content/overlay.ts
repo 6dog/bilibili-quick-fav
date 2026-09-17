@@ -15,6 +15,7 @@ export class OverlayUi {
   #coverAction: (() => void) | null = null;
   #detailAction: (() => void) | null = null;
   #pickerPromise: Promise<BiliFolder | null> | null = null;
+  #cancelPicker: (() => void) | null = null;
 
   constructor() {
     document.getElementById(HOST_ID)?.remove();
@@ -72,6 +73,7 @@ export class OverlayUi {
       .dialog p { margin: 0 0 16px; color: #70737a; font-size: 13px; }
       .folder { display: block; width: 100%; margin: 0 0 8px; padding: 12px 14px; border: 0; border-radius: 9px; color: #18191c; background: #f1f2f3; text-align: left; cursor: pointer; }
       .folder:hover, .folder:focus-visible { color: #fff; background: #00a1d6; outline: none; }
+      .dialog-close { float: right; border: 0; background: transparent; font-size: 22px; cursor: pointer; }
       @keyframes pulse { from { opacity: .35; } to { opacity: 1; } }
       @keyframes cover-acknowledge { 50% { filter: brightness(1.65); } }
       @keyframes detail-acknowledge { 50% { transform: scale(.9); } }
@@ -123,7 +125,9 @@ export class OverlayUi {
     button.disabled = false;
     button.setAttribute("aria-busy", String(snapshot.status === "loading" || snapshot.status === "mutating"));
     const action = snapshot.active ? "从" : "收藏到";
-    button.title = snapshot.status === "mutating"
+    button.title = snapshot.status === "error"
+      ? `${snapshot.message || "读取失败"}，点击重试`
+      : snapshot.status === "mutating"
       ? (snapshot.active ? "正在收藏…" : "正在取消收藏…")
       : snapshot.configured
         ? `${action}「${snapshot.folderTitle || "快捷收藏夹"}」`
@@ -194,7 +198,14 @@ export class OverlayUi {
       title.textContent = "选择快捷收藏夹";
       const hint = document.createElement("p");
       hint.textContent = "以后点击封面按钮只会加入或移出这个收藏夹。";
-      dialog.append(title, hint);
+      const closeButton = document.createElement("button");
+      closeButton.type = "button";
+      closeButton.className = "dialog-close";
+      closeButton.textContent = "×";
+      closeButton.setAttribute("aria-label", "关闭选择框");
+      dialog.append(closeButton, title, hint);
+      const focused = this.root.activeElement ?? document.activeElement;
+      const previousFocus = focused instanceof HTMLElement ? focused : null;
 
       let settled = false;
       const close = (folder: BiliFolder | null) => {
@@ -203,12 +214,24 @@ export class OverlayUi {
         document.removeEventListener("keydown", onKeyDown, true);
         backdrop.remove();
         this.#pickerPromise = null;
+        this.#cancelPicker = null;
+        previousFocus?.focus();
         resolve(folder);
       };
+      this.#cancelPicker = () => close(null);
       const onKeyDown = (event: KeyboardEvent) => {
         if (event.key === "Escape") close(null);
+        if (event.key === "Tab") {
+          const buttons = [...dialog.querySelectorAll<HTMLButtonElement>("button")];
+          const first = buttons[0];
+          const last = buttons.at(-1);
+          if (!buttons.includes(this.root.activeElement as HTMLButtonElement)) { event.preventDefault(); (event.shiftKey ? last : first)?.focus(); }
+          else if (event.shiftKey && this.root.activeElement === first) { event.preventDefault(); last?.focus(); }
+          else if (!event.shiftKey && this.root.activeElement === last) { event.preventDefault(); first?.focus(); }
+        }
       };
       document.addEventListener("keydown", onKeyDown, true);
+      closeButton.addEventListener("click", () => close(null));
 
       for (const [index, folder] of folders.entries()) {
         const button = document.createElement("button");
@@ -217,7 +240,7 @@ export class OverlayUi {
         button.textContent = `${folder.title}（${folder.mediaCount} 个视频）`;
         button.addEventListener("click", () => close(folder));
         dialog.appendChild(button);
-        if (index === 0) window.setTimeout(() => button.focus(), 0);
+        if (index === 0) window.setTimeout(() => { if (!settled) button.focus(); }, 0);
       }
       backdrop.addEventListener("click", (event) => {
         if (event.target === backdrop) close(null);
@@ -228,7 +251,10 @@ export class OverlayUi {
     return this.#pickerPromise;
   }
 
+  cancelFolderPicker(): void { this.#cancelPicker?.(); }
+
   destroy(): void {
+    this.cancelFolderPicker();
     this.host.remove();
   }
 }

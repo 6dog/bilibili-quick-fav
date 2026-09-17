@@ -12,7 +12,7 @@ interface ApiEnvelope<T> {
 export class BiliApiError extends Error {
   constructor(
     message: string,
-    readonly kind: "transport" | "response" | "auth" | "invalid",
+    readonly kind: "transport" | "response" | "auth" | "invalid" | "folder-missing" | "cancelled",
     readonly code?: number,
   ) {
     super(message);
@@ -28,6 +28,7 @@ function asEnvelope<T>(value: unknown): ApiEnvelope<T> {
 
 async function request<T>(path: string, init: RequestInit = {}, parentSignal?: AbortSignal): Promise<T> {
   if (!path.startsWith("/x/")) throw new BiliApiError("拒绝未知接口", "invalid");
+  if (parentSignal?.aborted) throw new BiliApiError("请求已取消", "cancelled");
   const controller = new AbortController();
   const abortFromParent = () => controller.abort(parentSignal?.reason);
   parentSignal?.addEventListener("abort", abortFromParent, { once: true });
@@ -51,7 +52,7 @@ async function request<T>(path: string, init: RequestInit = {}, parentSignal?: A
   } catch (error) {
     if (error instanceof BiliApiError) throw error;
     if (controller.signal.aborted) {
-      throw new BiliApiError("请求超时或已取消", "transport");
+      throw new BiliApiError(parentSignal?.aborted ? "请求已取消" : "请求超时", parentSignal?.aborted ? "cancelled" : "transport");
     }
     throw new BiliApiError("网络请求失败", "transport");
   } finally {
@@ -112,17 +113,28 @@ export class BiliApi {
       return [{
         id: String(row.id),
         title: row.title,
-        favorite: Number(row.fav_state) === 1,
+        favorite: row.fav_state === 1,
         mediaCount: Number.isFinite(Number(row.media_count)) ? Number(row.media_count) : 0,
       }];
     });
   }
 
   async getFolderState(mid: string, aid: number, folderId: string, signal?: AbortSignal): Promise<boolean> {
-    const folders = await this.getFolders(mid, aid, signal);
-    const folder = folders.find((item) => item.id === folderId);
-    if (!folder) throw new BiliApiError("快捷收藏夹不存在或已被删除", "invalid");
-    return folder.favorite;
+    const query = new URLSearchParams({ up_mid: mid, type: "2", rid: String(aid) });
+    const data = await request<{ list?: unknown[] }>(`/x/v3/fav/folder/created/list-all?${query}`, {}, signal);
+    if (!Array.isArray(data.list)) throw new BiliApiError("收藏夹列表无效", "invalid");
+    const folders = data.list.map((item) => {
+      if (!item || typeof item !== "object") throw new BiliApiError("收藏夹数据无效", "invalid");
+      const row = item as Record<string, unknown>;
+      if (!/^\d+$/.test(String(row.id)) || Number(row.id) <= 0 || typeof row.title !== "string") {
+        throw new BiliApiError("收藏夹数据无效", "invalid");
+      }
+      return row;
+    });
+    const folder = folders.find((item) => String(item.id) === folderId);
+    if (!folder) throw new BiliApiError("快捷收藏夹不存在或已被删除", "folder-missing");
+    if (![0, 1, "0", "1"].includes(folder.fav_state as string | number)) throw new BiliApiError("无法确认收藏状态", "invalid");
+    return Number(folder.fav_state) === 1;
   }
 
   async setFolderState(aid: number, folderId: string, active: boolean, signal?: AbortSignal): Promise<void> {

@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/qfav-browser-env.sh
 
-release_zip="${QFAV_RELEASE_ZIP:-$PWD/dist/release/bilibili-quick-fav-2.0.4.zip}"
+release_version="$(node -p "require('./package.json').version")"
+release_zip="${QFAV_RELEASE_ZIP:-$PWD/dist/release/bilibili-quick-fav-${release_version}.zip}"
 if [[ ! -f "$release_zip" ]]; then
   echo "Release ZIP is missing: $release_zip" >&2
   exit 1
@@ -14,7 +15,7 @@ if curl -fsS --max-time 2 "http://127.0.0.1:$QFAV_BROWSER_PORT/json/version" >/d
   exit 2
 fi
 
-test_dir="$(mktemp -d "${TMPDIR:-/tmp}/qfav-release-2.0.4.XXXXXX")"
+test_dir="$(mktemp -d "${TMPDIR:-/tmp}/qfav-release-${release_version}.XXXXXX")"
 chrome_log="$test_dir/chrome.log"
 chrome_pid=""
 cleanup() {
@@ -52,9 +53,22 @@ for _ in {1..40}; do
 done
 curl -fsS --max-time 2 "http://127.0.0.1:$QFAV_BROWSER_PORT/json/version" >/dev/null
 
-QFAV_EXTENSION_DIR="$test_dir/extension" node scripts/load-extension-browser.mjs
-check_args=(--toggle-favorite)
-if [[ "${QFAV_FAVORITE_ONLY:-0}" == "1" ]]; then
-  check_args+=(--favorite-only)
+load_result="$(QFAV_EXTENSION_DIR="$test_dir/extension" node scripts/load-extension-browser.mjs)"
+echo "$load_result"
+extension_id="$(node -p 'JSON.parse(process.argv[1]).id' "$load_result")"
+if [[ "${QFAV_ALLOW_FAVORITE_WRITE:-0}" == "1" ]]; then
+  export QFAV_TEST_FOLDER_ID="${QFAV_TEST_FOLDER_ID:-auto}"
 fi
-node scripts/check-extension-browser.mjs "${check_args[@]}"
+if [[ "${QFAV_ALLOW_FAVORITE_WRITE:-0}" == "1" && "${QFAV_FAVORITE_ONLY:-0}" == "1" ]]; then
+  QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --toggle-favorite --favorite-only
+elif [[ "${QFAV_ALLOW_FAVORITE_WRITE:-0}" == "1" ]]; then
+  QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --toggle-favorite
+elif [[ "${QFAV_CAPTURE_STORE_SCREENSHOT:-0}" == "1" ]]; then
+  QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --capture-store-screenshot --video-only
+elif [[ "${QFAV_CAPTURE_STORE_ASSETS:-0}" == "1" ]]; then
+  QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --capture-store-assets
+elif [[ "${QFAV_SPEED_DIAGNOSTICS:-0}" == "1" ]]; then
+  QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --speed-diagnostics --video-only
+else
+  QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs
+fi

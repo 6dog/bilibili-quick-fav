@@ -7,7 +7,11 @@ import archiver from "archiver";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const extensionRoot = path.join(projectRoot, "dist", "extension");
 const releaseRoot = path.join(projectRoot, "dist", "release");
-const zipPath = path.join(releaseRoot, "bilibili-quick-fav-2.0.4.zip");
+const version = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8")).version;
+const zipPath = path.join(releaseRoot, `bilibili-quick-fav-${version}.zip`);
+const builtVersion = (await readFile(path.join(extensionRoot, "BUILD_VERSION"), "utf8")).trim();
+const builtManifest = JSON.parse(await readFile(path.join(extensionRoot, "manifest.json"), "utf8"));
+if (builtVersion !== version || builtManifest.version !== version) throw new Error("Built extension version does not match package.json");
 const fixedDate = new Date("2020-01-01T00:00:00.000Z");
 
 async function collectFiles(directory, prefix = "") {

@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 import process from "node:process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 const port = process.env.QFAV_BROWSER_PORT || "9333";
 const allowFavoriteMutation = process.argv.includes("--toggle-favorite");
 const favoriteOnly = process.argv.includes("--favorite-only");
+const videoOnly = process.argv.includes("--video-only");
+const captureStoreScreenshot = process.argv.includes("--capture-store-screenshot");
+const captureStoreAssets = process.argv.includes("--capture-store-assets");
 const endpoint = `http://127.0.0.1:${port}`;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const expectedVersion = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
 
 class Cdp {
   constructor(url) {
@@ -75,6 +80,17 @@ async function clickMouse(cdp, x, y) {
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", button: "left", clickCount: 1, x, y });
 }
 
+async function saveStoreScreenshot(cdp, filename) {
+  const directory = new URL("../dist/store-assets/", import.meta.url);
+  await mkdir(directory, { recursive: true });
+  const screenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    captureBeyondViewport: false,
+    clip: { x: 40, y: 150, width: 1280, height: 800, scale: 1 },
+  });
+  await writeFile(new URL(filename, directory), Buffer.from(screenshot.data, "base64"));
+}
+
 async function waitFor(cdp, expression, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -117,6 +133,7 @@ async function createPage(url) {
   await cdp.send("Runtime.enable");
   await cdp.send("Page.setLifecycleEventsEnabled", { enabled: true });
   await cdp.send("Page.navigate", { url });
+  await cdp.send("Page.bringToFront");
   const expectedHost = JSON.stringify(new URL(url).hostname);
   await waitFor(cdp, `location.hostname === ${expectedHost} && document.readyState !== 'loading'`, 30_000);
   return { cdp, target };
@@ -181,7 +198,7 @@ async function checkCoverPage(label, url) {
     await waitFor(page.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot");
     await wait(3_000);
     const base = await inspectBase(page.cdp);
-    assert(base.version === "2.0.4", `${label}: extension version marker missing`);
+    assert(base.version === expectedVersion, `${label}: extension version marker missing`);
     assert(base.runtime === "chrome-extension", `${label}: wrong runtime`);
     assert(base.directBodyChild && base.shadow, `${label}: Shadow DOM isolation missing`);
     assert(base.coverButtonCount === 1, `${label}: expected one reusable cover button`);
@@ -237,6 +254,13 @@ async function checkCoverPage(label, url) {
       return style?.visibility === 'visible' && Number(style.opacity) > .2 && button?.matches(':hover');
     })()`);
     assert(buttonHoverVisible, `${label}: cover button flickered or disappeared while pointer was over it`);
+    if (captureStoreAssets && label === "home") {
+      await saveStoreScreenshot(page.cdp, "cover-1280x800.png");
+      await clickMouse(page.cdp, buttonPoint.x, buttonPoint.y);
+      await waitFor(page.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.folder')", 10_000);
+      await saveStoreScreenshot(page.cdp, "picker-1280x800.png");
+      return { label, version: base.version, cover: "pass", picker: "pass", screenshots: "captured" };
+    }
     await moveMouse(page.cdp, 2, 2);
     await wait(200);
     const outsideVisible = await evaluate(page.cdp, `getComputedStyle(document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.cover-button')).visibility === 'visible'`);
@@ -262,7 +286,7 @@ async function checkVideoPage(url) {
     await waitFor(page.cdp, "document.querySelector('.bpx-player-video-wrap video,#bilibili-player video')", 30_000);
     await wait(4_500);
     const base = await inspectBase(page.cdp);
-    assert(base.version === "2.0.4" && base.detailButtonCount === 1, "video: extension/detail marker missing");
+    assert(base.version === expectedVersion && base.detailButtonCount === 1, "video: extension/detail marker missing");
     assert(!base.oldUserscriptPresent, "video: old userscript is also active");
     const initial = await evaluate(page.cdp, `(() => {
       const video = document.querySelector('.bpx-player-video-wrap video,#bilibili-player video');
@@ -274,6 +298,21 @@ async function checkVideoPage(url) {
     assert(Math.abs(initial.rate - 1.5) < .01, `video: expected 1.5x, got ${initial.rate}`);
     assert(initial.visible, "video: detail button is not safely visible");
     assert(initial.player && initial.button.top >= initial.player.bottom - 2, "video: detail button is not below player");
+    if (process.argv.includes("--speed-diagnostics")) {
+      const candidates = await evaluate(page.cdp, `(() => [...document.querySelectorAll('[class*="playbackrate"],[class*="speed"]')]
+        .map(element => ({ className: String(element.className).slice(0, 90), text: (element.textContent || '').trim().slice(0, 45), rect: element.getBoundingClientRect() }))
+        .filter(item => item.rect.width > 0 && item.rect.height > 0)
+        .slice(0, 30).map(({ className, text, rect }) => ({ className, text, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) })))()`);
+      console.log(JSON.stringify({ speedCandidates: candidates }));
+    }
+    if (captureStoreScreenshot) {
+      const screenshot = await page.cdp.send("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: false,
+        clip: { x: 40, y: 160, width: 1280, height: 800, scale: 1 },
+      });
+      await writeFile(new URL("../dist/store-assets/screenshot-1280x800.png", import.meta.url), Buffer.from(screenshot.data, "base64"));
+    }
 
     await waitFor(page.cdp, `document.documentElement.scrollHeight > innerHeight + 800`, 30_000);
     const scrollSamples = [];
@@ -289,16 +328,19 @@ async function checkVideoPage(url) {
         const root = document.querySelector('#qfav-extension-root')?.shadowRoot;
         const button = root?.querySelector('.detail-button');
         const anchor = document.querySelector('.video-toolbar-left')?.getBoundingClientRect();
+        const player = document.querySelector('#bilibili-player,.bpx-player-container')?.getBoundingClientRect();
         const rect = button?.getBoundingClientRect();
         return {
           scrollY,
           viewportHeight: innerHeight,
           anchor: anchor && { top: anchor.top, bottom: anchor.bottom, right: anchor.right },
+          player: player && { left: player.left, top: player.top, right: player.right, bottom: player.bottom },
           button: rect && { top: rect.top, bottom: rect.bottom, left: rect.left },
           visible: button ? getComputedStyle(button).visibility === 'visible' : false,
         };
       })()`);
-      if (frame.anchor && frame.button && frame.anchor.top >= 2 && frame.anchor.bottom <= frame.viewportHeight) {
+      const frameSafe = frame.anchor && frame.button && frame.player && frame.anchor.top >= 2 && frame.button.top >= 0 && frame.button.bottom <= frame.viewportHeight && frame.anchor.top >= frame.player.bottom - 2 && frame.button.top >= frame.player.bottom && frame.anchor.bottom <= frame.viewportHeight;
+      if (frameSafe) {
         const expectedTop = frame.anchor.top + (frame.anchor.bottom - frame.anchor.top - 40) / 2;
         assert(frame.visible, `video: detail button flickered off during safe scroll (${JSON.stringify(frame)})`);
         assert(Math.abs(frame.button.top - expectedTop) <= 1 && Math.abs(frame.button.left - (frame.anchor.right + 8)) <= 1,
@@ -309,15 +351,18 @@ async function checkVideoPage(url) {
         const root = document.querySelector('#qfav-extension-root')?.shadowRoot;
         const button = root?.querySelector('.detail-button');
         const anchor = document.querySelector('.video-toolbar-left')?.getBoundingClientRect();
+        const player = document.querySelector('#bilibili-player,.bpx-player-container')?.getBoundingClientRect();
         const rect = button?.getBoundingClientRect();
         return {
           scrollY,
           anchor: anchor && { top: anchor.top, bottom: anchor.bottom, right: anchor.right },
+          player: player && { left: player.left, top: player.top, right: player.right, bottom: player.bottom },
           button: rect && { top: rect.top, bottom: rect.bottom, left: rect.left },
           visible: button ? getComputedStyle(button).visibility === 'visible' : false,
         };
       })()`);
-      if (rendered.anchor && rendered.button && rendered.anchor.top >= 2 && rendered.anchor.bottom <= frame.viewportHeight) {
+      const renderedSafe = rendered.anchor && rendered.button && rendered.player && rendered.anchor.top >= 2 && rendered.button.top >= 0 && rendered.button.bottom <= frame.viewportHeight && rendered.anchor.top >= rendered.player.bottom - 2 && rendered.button.top >= rendered.player.bottom && rendered.anchor.bottom <= frame.viewportHeight;
+      if (renderedSafe) {
         assert(rendered.visible, `video: detail button flickered after scroll (${JSON.stringify(rendered)})`);
       }
       scrollSamples.push({ frame, settled: rendered });
@@ -339,10 +384,31 @@ async function checkVideoPage(url) {
     await evaluate(page.cdp, `scrollTo(0, 0)`);
     await waitFor(page.cdp, `document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.detail-button.visible')`, 5_000);
 
-    await evaluate(page.cdp, `(() => { const video = document.querySelector('.bpx-player-video-wrap video,#bilibili-player video'); video.playbackRate = 2; })()`);
+    const speedControl = await evaluate(page.cdp, `(() => {
+      const rect = document.querySelector('.bpx-player-ctrl-playbackrate')?.getBoundingClientRect();
+      return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+    })()`);
+    assert(speedControl, 'video: speed menu control not found');
+    await moveMouse(page.cdp, speedControl.x, speedControl.y);
+    await wait(350);
+    const speedItem = await evaluate(page.cdp, `(() => {
+      const item = [...document.querySelectorAll('.bpx-player-ctrl-playbackrate-menu-item')]
+        .find(element => /(^|\\D)2(?:\\.0)?\\s*[x倍]/i.test((element.textContent || '').trim()));
+      const rect = item?.getBoundingClientRect();
+      return rect && rect.width > 0 && rect.height > 0 ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+    })()`);
+    assert(speedItem, 'video: actual 2x menu item not visible');
+    await clickMouse(page.cdp, speedItem.x, speedItem.y);
     await wait(2_000);
     const retained = await evaluate(page.cdp, `document.querySelector('.bpx-player-video-wrap video,#bilibili-player video').playbackRate`);
     assert(Math.abs(retained - 2) < .01, `video: manual 2x was overridden (${retained})`);
+
+    await evaluate(page.cdp, `(() => {
+      const next = new URL(location.href);
+      next.searchParams.set('p', next.searchParams.get('p') === '2' ? '3' : '2');
+      history.pushState({}, '', next);
+    })()`);
+    await waitFor(page.cdp, `Math.abs(document.querySelector('.bpx-player-video-wrap video,#bilibili-player video')?.playbackRate - 1.5) < .01`, 8_000);
 
     await evaluate(page.cdp, `document.documentElement.requestFullscreen()`, true);
     await wait(500);
@@ -350,83 +416,197 @@ async function checkVideoPage(url) {
     assert(fullscreenHidden, "video: extension UI remained visible in fullscreen");
     await evaluate(page.cdp, `document.exitFullscreen()`, true);
     await wait(700);
-    return { label: "video", version: base.version, rate: "1.5/pass", manualRate: "2.0/pass", fullscreen: "pass", detail: "pass" };
+    return { label: "video", version: base.version, rate: "1.5/pass", manualRate: "2.0/pass", semanticRoute: "pass", fullscreen: "pass", detail: "pass" };
   } finally {
     await closePage(page);
   }
 }
 
+async function checkCrossTabSync(url) {
+  const extensionId = process.env.QFAV_EXTENSION_ID;
+  assert(extensionId, "cross-tab: loaded extension id is missing");
+  let first = null;
+  let second = null;
+  let popup = null;
+  let initialEnabled = null;
+  let senderTabId = null;
+  try {
+    popup = await createPage(`chrome-extension://${extensionId}/popup/index.html`);
+    const existingTabs = await evaluate(popup.cdp, `(async () => (await chrome.tabs.query({})).map(tab => tab.id).filter(Boolean))()`);
+    first = await createPage(url);
+    await waitFor(first.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot");
+    second = await createPage(url);
+    await waitFor(second.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot");
+    const tabs = await evaluate(popup.cdp, `(async () => {
+      const tabs = await chrome.tabs.query({});
+      const active = [];
+      for (const tab of tabs) {
+        if (!tab.id || ${JSON.stringify(existingTabs)}.includes(tab.id)) continue;
+        try {
+          const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_STATUS' });
+          if (response?.ok && response.status?.version === ${JSON.stringify(expectedVersion)} && response.status.supportedPage) active.push(tab.id);
+        } catch { /* Non-Bilibili tabs have no content script. */ }
+      }
+      return active;
+    })()`);
+    assert(tabs.length === 2, `cross-tab: expected exactly two Bilibili tabs, got ${tabs.length}`);
+    senderTabId = tabs[0];
+    const receiverTabId = tabs[1];
+    const status = async (tabId) => evaluate(popup.cdp, `(async () => {
+      const result = await chrome.tabs.sendMessage(${tabId}, { type: 'GET_STATUS' });
+      return result?.ok ? { enabled: result.status?.playbackEnabled, rate: result.status?.playbackRate } : null;
+    })()`);
+    const setEnabled = async (enabled) => evaluate(popup.cdp, `(async () => {
+      const result = await chrome.tabs.sendMessage(${senderTabId}, { type: 'SET_PLAYBACK_ENABLED', enabled: ${enabled} });
+      return result?.ok === true;
+    })()`);
+    initialEnabled = (await status(senderTabId))?.enabled;
+    assert(typeof initialEnabled === "boolean", "cross-tab: cannot read initial setting");
+    assert(await setEnabled(!initialEnabled), "cross-tab: setting change failed");
+    await waitFor(popup.cdp, `(async () => {
+      const result = await chrome.tabs.sendMessage(${receiverTabId}, { type: 'GET_STATUS' });
+      return result?.ok && result.status?.playbackEnabled === ${!initialEnabled};
+    })()`, 10_000);
+    assert(await setEnabled(initialEnabled), "cross-tab: setting restore failed");
+    await waitFor(popup.cdp, `(async () => {
+      const result = await chrome.tabs.sendMessage(${receiverTabId}, { type: 'GET_STATUS' });
+      return result?.ok && result.status?.playbackEnabled === ${initialEnabled};
+    })()`, 10_000);
+    return { label: "cross-tab", settingSync: "pass", restored: true };
+  } finally {
+    if (popup && senderTabId !== null && initialEnabled !== null) {
+      await evaluate(popup.cdp, `(async () => {
+        const result = await chrome.tabs.sendMessage(${senderTabId}, { type: 'SET_PLAYBACK_ENABLED', enabled: ${initialEnabled} });
+        return result?.ok === true;
+      })()`).catch(() => {});
+    }
+    if (popup) await closePage(popup);
+    if (second) await closePage(second);
+    if (first) await closePage(first);
+  }
+}
+
 async function reversibleFavoriteTest(url) {
   const page = await createPage(url);
-  let snapshot = null;
+  let baseline = null;
+  let target = null;
+  let writeAttempted = false;
+  let restored = false;
+  const readStates = async (aid, expectedMid) => evaluate(page.cdp, `(async () => {
+    const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
+    if (nav.code !== 0 || String(nav.data?.mid) !== ${JSON.stringify(expectedMid)}) throw new Error('favorite: account changed during test');
+    const list = await fetch('https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=' + nav.data.mid + '&type=2&rid=${aid}', { credentials: 'include' }).then(r => r.json());
+    if (list.code !== 0 || !Array.isArray(list.data?.list)) throw new Error('favorite: folder state read failed');
+    return list.data.list.map(item => ({ id: String(item.id), title: String(item.title), active: Number(item.fav_state) }));
+  })()`);
+  const buttonPoint = () => evaluate(page.cdp, `(() => {
+    const button = document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.detail-button.visible');
+    if (!button) return null;
+    const r = button.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  })()`);
+  const assertOnlyTargetChanged = (before, after, expectedActive) => {
+    assert(before.length === after.length, 'favorite: folder list changed during test');
+    for (const folder of before) {
+      const current = after.find(item => item.id === folder.id);
+      assert(current, 'favorite: a folder disappeared during test');
+      assert(current.active === (folder.id === target.id ? expectedActive : folder.active),
+        `favorite: unexpected state change in folder ${folder.id}`);
+    }
+  };
   try {
     await waitFor(page.cdp, "document.querySelector('#qfav-extension-root')?.shadowRoot?.querySelector('.detail-button.visible')", 30_000);
-    snapshot = await evaluate(page.cdp, `(async () => {
+    const identity = await evaluate(page.cdp, `(async () => {
       const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
-      const bvid = location.pathname.match(/\\/video\\/(BV[\\w]+)/)?.[1];
+      const bvid = location.pathname.split('/').find(part => part.startsWith('BV'));
       const view = await fetch('https://api.bilibili.com/x/web-interface/view?bvid=' + bvid, { credentials: 'include' }).then(r => r.json());
-      const list = await fetch('https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=' + nav.data.mid + '&type=2&rid=' + view.data.aid, { credentials: 'include' }).then(r => r.json());
-      return { aid: view.data.aid, states: list.data.list.map(item => [String(item.id), Number(item.fav_state)]), folderCount: list.data.list.length };
+      if (nav.code !== 0 || !nav.data?.mid || view.code !== 0 || !view.data?.aid) throw new Error('favorite: login or video lookup failed');
+      return { mid: String(nav.data.mid), aid: view.data.aid };
     })()`);
-    assert(snapshot.folderCount > 0, "favorite: account has no folder to test");
-    const buttonPoint = await evaluate(page.cdp, `(() => { const r = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
-    await clickMouse(page.cdp, buttonPoint.x, buttonPoint.y);
-    await waitFor(page.cdp, "document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.folder')", 20_000);
-    const folderPoint = await evaluate(page.cdp, `(() => { const r = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.folder').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
-    const firstDesiredActive = snapshot.states[0][1] !== 1;
+    baseline = { ...identity, states: await readStates(identity.aid, identity.mid) };
+    assert(baseline.states.length > 0, 'favorite: account has no folder to test');
+    assert(baseline.states.every(item => item.active === 0 || item.active === 1), 'favorite: state is not confirmed');
+    const title = await evaluate(page.cdp, `document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button').title`);
+    const firstUse = title === '选择快捷收藏夹';
+    const requestedId = process.env.QFAV_TEST_FOLDER_ID || 'auto';
+    if (firstUse) {
+      target = baseline.states.find(item => item.active === 0 && (requestedId === 'auto' || item.id === requestedId));
+    } else {
+      const selectedTitle = title.match(/「(.+)」/)?.[1];
+      const matches = baseline.states.filter(item => item.title === selectedTitle);
+      assert(matches.length === 1, 'favorite: existing selection is ambiguous; choose a unique test folder first');
+      target = matches[0];
+      assert(requestedId === 'auto' || target.id === requestedId, 'favorite: configured folder differs from QFAV_TEST_FOLDER_ID');
+    }
+    assert(target, 'favorite: no eligible target folder');
+    assert(target.active === 0, 'favorite: target already contains this video; choose another test video');
     const firstStartedAt = Date.now();
-    await clickMouse(page.cdp, folderPoint.x, folderPoint.y);
-    await waitForFavoriteUi(page.cdp, firstDesiredActive, "first operation");
+    if (firstUse) {
+      const point = await buttonPoint();
+      assert(point, 'favorite: detail button disappeared before selection');
+      const hit = await evaluate(page.cdp, `(() => {
+        const button = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button');
+        const rect = button.getBoundingClientRect();
+        const element = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        const inner = button.getRootNode().elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        return { hitTag: element?.tagName, hitClass: String(element?.className || '').slice(0, 80), innerTag: inner?.tagName, innerClass: String(inner?.className || '').slice(0, 80), inExtension: inner === button || button.contains(inner) };
+      })()`);
+      assert(hit.inExtension, `favorite: detail button is covered (${JSON.stringify(hit)})`);
+      await clickMouse(page.cdp, point.x, point.y);
+      try {
+        await waitFor(page.cdp, "document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.folder')", 10_000);
+      } catch {
+        const state = await evaluate(page.cdp, `(() => {
+          const root = document.querySelector('#qfav-extension-root')?.shadowRoot;
+          return { notice: root?.querySelector('.notice')?.textContent || null, dialog: Boolean(root?.querySelector('.dialog')), busy: root?.querySelector('.detail-button')?.getAttribute('aria-busy') };
+        })()`);
+        throw new Error(`favorite: folder picker did not open (${JSON.stringify(state)})`);
+      }
+      const index = baseline.states.findIndex(item => item.id === target.id);
+      const selectionPoint = await evaluate(page.cdp, `(() => {
+        const buttons = [...document.querySelector('#qfav-extension-root').shadowRoot.querySelectorAll('.folder')];
+        if (buttons.length !== ${baseline.states.length}) return null;
+        const r = buttons[${index}]?.getBoundingClientRect();
+        return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+      })()`);
+      assert(selectionPoint, 'favorite: folder picker differs from the preflight list');
+      writeAttempted = true;
+      await clickMouse(page.cdp, selectionPoint.x, selectionPoint.y);
+    } else {
+      const point = await buttonPoint();
+      assert(point, 'favorite: detail button disappeared before write');
+      writeAttempted = true;
+      await clickMouse(page.cdp, point.x, point.y);
+    }
+    await waitForFavoriteUi(page.cdp, true, 'add operation');
     const firstClickMs = Date.now() - firstStartedAt;
-    const afterFirst = await evaluate(page.cdp, `(async () => {
-      const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
-      const list = await fetch('https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=' + nav.data.mid + '&type=2&rid=${snapshot.aid}', { credentials: 'include' }).then(r => r.json());
-      return list.data.list.map(item => [String(item.id), Number(item.fav_state)]);
-    })()`);
-    const changed = afterFirst.filter(([id, state]) => snapshot.states.find(([beforeId]) => beforeId === id)?.[1] !== state);
-    assert(changed.length === 1, `favorite: expected exactly one folder change, got ${changed.length}`);
-    await waitFor(page.cdp, "document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button.visible:not(:disabled)')", 8_000);
-    const secondPoint = await evaluate(page.cdp, `(() => { const r = document.querySelector('#qfav-extension-root').shadowRoot.querySelector('.detail-button').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const afterAdd = await readStates(baseline.aid, baseline.mid);
+    assertOnlyTargetChanged(baseline.states, afterAdd, 1);
+    const point = await buttonPoint();
+    assert(point, 'favorite: detail button disappeared before restore');
     const secondStartedAt = Date.now();
-    await clickMouse(page.cdp, secondPoint.x, secondPoint.y);
-    await waitForFavoriteUi(page.cdp, !firstDesiredActive, "restore operation");
+    await clickMouse(page.cdp, point.x, point.y);
+    await waitForFavoriteUi(page.cdp, false, 'remove operation');
     const secondClickMs = Date.now() - secondStartedAt;
-    const restored = await evaluate(page.cdp, `(async () => {
-      const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
-      const list = await fetch('https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=' + nav.data.mid + '&type=2&rid=${snapshot.aid}', { credentials: 'include' }).then(r => r.json());
-      return list.data.list.map(item => [String(item.id), Number(item.fav_state)]);
-    })()`);
-    assert(JSON.stringify(restored) === JSON.stringify(snapshot.states), "favorite: original folder state was not restored exactly");
-    return { label: "favorite", changedFolders: 1, restored: true, firstClickMs, secondClickMs };
+    const afterRemove = await readStates(baseline.aid, baseline.mid);
+    assertOnlyTargetChanged(baseline.states, afterRemove, 0);
+    restored = true;
+    return { label: 'favorite', targetFolderId: target.id, changedFolders: 1, restored: true, firstClickMs, secondClickMs };
   } finally {
     try {
-      if (snapshot) {
-        const cleanup = await evaluate(page.cdp, `(async () => {
-        const expected = ${JSON.stringify(snapshot?.states ?? [])};
-        const aid = ${snapshot?.aid ?? 0};
-        const nav = await fetch('https://api.bilibili.com/x/web-interface/nav', { credentials: 'include' }).then(r => r.json());
-        const read = async () => fetch('https://api.bilibili.com/x/v3/fav/folder/created/list-all?up_mid=' + nav.data.mid + '&type=2&rid=' + aid, { credentials: 'include' }).then(r => r.json()).then(data => data.data.list.map(item => [String(item.id), Number(item.fav_state)]));
-        const current = await read();
-        const add = [];
-        const remove = [];
-        for (const [id, state] of expected) {
-          const now = current.find(([currentId]) => currentId === id)?.[1];
-          if (now === state) continue;
-          (state === 1 ? add : remove).push(id);
+      if (writeAttempted && !restored && baseline && target) {
+        const current = await readStates(baseline.aid, baseline.mid);
+        const state = current.find(item => item.id === target.id)?.active;
+        if (state === 1) {
+          const point = await buttonPoint();
+          assert(point, 'favorite: target changed but restore button is unavailable');
+          await clickMouse(page.cdp, point.x, point.y);
+          await waitForFavoriteUi(page.cdp, false, 'emergency restore');
+          const after = await readStates(baseline.aid, baseline.mid);
+          assert(after.find(item => item.id === target.id)?.active === 0, 'favorite: target folder was not restored');
+        } else {
+          assert(state === 0, 'favorite: target state is unknown; manual verification required');
         }
-        if (add.length || remove.length) {
-          const csrf = document.cookie.match(/(?:^|;\\s*)bili_jct=([^;]+)/)?.[1];
-          if (!csrf) return false;
-          const body = new URLSearchParams({ rid: String(aid), type: '2', csrf: decodeURIComponent(csrf) });
-          if (add.length) body.set('add_media_ids', add.join(','));
-          if (remove.length) body.set('del_media_ids', remove.join(','));
-          const result = await fetch('https://api.bilibili.com/x/v3/fav/resource/deal', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body }).then(r => r.json());
-          if (result.code !== 0) return false;
-          await new Promise(resolve => setTimeout(resolve, 600));
-        }
-        return JSON.stringify(await read()) === JSON.stringify(expected);
-        })()`);
-        assert(cleanup, "favorite: emergency cleanup could not restore the original folder state");
       }
     } finally {
       await closePage(page);
@@ -439,12 +619,15 @@ async function main() {
   if (!version) throw new Error(`No Chrome DevTools endpoint on port ${port}`);
   const results = [];
   const videoUrl = "https://www.bilibili.com/video/BV1AxtJ6NEFR/";
-  if (!favoriteOnly) {
+  if (!favoriteOnly && !videoOnly) {
     results.push(await checkCoverPage("home", "https://www.bilibili.com/"));
     results.push(await checkCoverPage("popular", "https://www.bilibili.com/v/popular/all/"));
     results.push(await checkCoverPage("search", "https://search.bilibili.com/all?keyword=Chrome"));
     results.push(await checkCoverPage("dynamic", "https://t.bilibili.com/"));
+  }
+  if (!favoriteOnly) {
     results.push(await checkVideoPage(videoUrl));
+    if (!videoOnly) results.push(await checkCrossTabSync(videoUrl));
   }
   if (allowFavoriteMutation) results.push(await reversibleFavoriteTest(videoUrl));
   console.log(JSON.stringify({ ok: true, favoriteMutation: allowFavoriteMutation, results }, null, 2));

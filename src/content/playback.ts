@@ -60,8 +60,9 @@ export class PlaybackController {
   }
 
   setEnabled(enabled: boolean): void {
+    const wasEnabled = this.#enabled;
     this.#enabled = enabled;
-    if (enabled) this.scheduleScan();
+    if (enabled && !wasEnabled) { this.scheduleScan(); this.scheduleApplySequence(); }
     else this.clearTimers();
   }
 
@@ -84,8 +85,10 @@ export class PlaybackController {
     if (!this.#enabled || !isSupportedPlaybackPage()) return;
     const video = findMainVideo();
     if (!video) return;
-    if (video !== this.#video) this.attachVideo(video);
-    this.scheduleApplySequence();
+    if (video !== this.#video) {
+      this.attachVideo(video);
+      this.scheduleApplySequence();
+    }
   }
 
   private attachVideo(video: HTMLVideoElement): void {

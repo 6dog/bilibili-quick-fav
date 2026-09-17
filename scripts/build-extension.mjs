@@ -6,6 +6,12 @@ import sharp from "sharp";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = path.join(projectRoot, "dist", "extension");
+const packageVersion = JSON.parse(await readFile(path.join(projectRoot, "package.json"), "utf8")).version;
+const manifest = JSON.parse(await readFile(path.join(projectRoot, "extension", "manifest.json"), "utf8"));
+const typesSource = await readFile(path.join(projectRoot, "src", "shared", "types.ts"), "utf8");
+if (manifest.version !== packageVersion || !typesSource.includes(`EXTENSION_VERSION = "${packageVersion}"`)) {
+  throw new Error("package.json, manifest and runtime version must match");
+}
 
 await rm(outputRoot, { recursive: true, force: true });
 await mkdir(path.join(outputRoot, "popup"), { recursive: true });
@@ -43,8 +49,9 @@ for (const size of [16, 32, 48, 128]) {
 const promoSvg = await readFile(path.join(projectRoot, "assets", "store-promo.svg"));
 await mkdir(path.join(projectRoot, "dist", "store-assets"), { recursive: true });
 await sharp(promoSvg).png().toFile(path.join(projectRoot, "dist", "store-assets", "small-promo-440x280.png"));
-const screenshotSvg = await readFile(path.join(projectRoot, "assets", "store-screenshot.svg"));
-await sharp(screenshotSvg).png().toFile(path.join(projectRoot, "dist", "store-assets", "screenshot-1280x800.png"));
-await writeFile(path.join(outputRoot, "BUILD_VERSION"), "2.0.4\n", "utf8");
+await cp(path.join(projectRoot, "assets", "store-screenshot.png"), path.join(projectRoot, "dist", "store-assets", "screenshot-1280x800.png"));
+await cp(path.join(projectRoot, "assets", "store-cover.png"), path.join(projectRoot, "dist", "store-assets", "cover-1280x800.png"));
+await cp(path.join(projectRoot, "assets", "store-picker.png"), path.join(projectRoot, "dist", "store-assets", "picker-1280x800.png"));
+await writeFile(path.join(outputRoot, "BUILD_VERSION"), `${packageVersion}\n`, "utf8");
 
 console.log(`Built extension at ${outputRoot}`);

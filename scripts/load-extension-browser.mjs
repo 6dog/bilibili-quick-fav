@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
 import process from "node:process";
+import { readFile } from "node:fs/promises";
 
 const port = process.env.QFAV_BROWSER_PORT || "9333";
 const extensionPath = path.resolve(process.env.QFAV_EXTENSION_DIR || "dist/extension");
@@ -33,4 +34,5 @@ const result = await new Promise((resolve, reject) => {
 
 socket.close();
 if (!result?.id) throw new Error("Chrome did not return an extension id");
-console.log(JSON.stringify({ ok: true, version: "2.0.4", loaded: true }));
+const manifest = JSON.parse(await readFile(path.join(extensionPath, "manifest.json"), "utf8"));
+console.log(JSON.stringify({ ok: true, version: manifest.version, id: result.id, loaded: true }));

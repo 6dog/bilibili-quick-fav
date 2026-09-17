@@ -1,6 +1,9 @@
 import type { QuickFolder, SettingsV1 } from "./types";
 
 export const SETTINGS_KEY = "qfav.settings.v1";
+export const PLAYBACK_KEY = "qfav.playback.v2";
+export const FOLDER_KEY_PREFIX = "qfav.folder.v2.";
+export const folderStorageKey = (mid: string): string => `${FOLDER_KEY_PREFIX}${mid}`;
 
 export const DEFAULT_SETTINGS: SettingsV1 = {
   schemaVersion: 1,
@@ -38,8 +41,20 @@ export function normalizeSettings(value: unknown): SettingsV1 {
 
 export class SettingsRepository {
   async load(): Promise<SettingsV1> {
-    const result = await chrome.storage.local.get(SETTINGS_KEY);
-    return normalizeSettings(result[SETTINGS_KEY]);
+    const result = await chrome.storage.local.get(null);
+    const settings = normalizeSettings(result[SETTINGS_KEY]);
+    if (typeof result[PLAYBACK_KEY] === "boolean") settings.playbackEnabled = result[PLAYBACK_KEY];
+    for (const [key, value] of Object.entries(result)) {
+      if (!key.startsWith(FOLDER_KEY_PREFIX)) continue;
+      const mid = key.slice(FOLDER_KEY_PREFIX.length);
+      if (!/^\d+$/.test(mid)) continue;
+      if (value === null) delete settings.foldersByMid[mid];
+      else {
+        const normalized = normalizeSettings({ foldersByMid: { [mid]: value } }).foldersByMid[mid];
+        if (normalized) settings.foldersByMid[mid] = normalized;
+      }
+    }
+    return settings;
   }
 
   async save(settings: SettingsV1): Promise<void> {
@@ -47,25 +62,24 @@ export class SettingsRepository {
   }
 
   async getFolder(mid: string): Promise<QuickFolder | null> {
-    const settings = await this.load();
-    return settings.foldersByMid[mid] ?? null;
+    if (!/^\d+$/.test(mid)) return null;
+    const key = folderStorageKey(mid);
+    const result = await chrome.storage.local.get([key, SETTINGS_KEY]);
+    if (Object.hasOwn(result, key)) {
+      return normalizeSettings({ foldersByMid: { [mid]: result[key] } }).foldersByMid[mid] ?? null;
+    }
+    return normalizeSettings(result[SETTINGS_KEY]).foldersByMid[mid] ?? null;
   }
 
   async setFolder(mid: string, folder: QuickFolder): Promise<void> {
-    const settings = await this.load();
-    settings.foldersByMid[mid] = folder;
-    await this.save(settings);
+    await chrome.storage.local.set({ [folderStorageKey(mid)]: folder });
   }
 
   async clearFolder(mid: string): Promise<void> {
-    const settings = await this.load();
-    delete settings.foldersByMid[mid];
-    await this.save(settings);
+    await chrome.storage.local.set({ [folderStorageKey(mid)]: null });
   }
 
   async setPlaybackEnabled(enabled: boolean): Promise<void> {
-    const settings = await this.load();
-    settings.playbackEnabled = enabled;
-    await this.save(settings);
+    await chrome.storage.local.set({ [PLAYBACK_KEY]: enabled });
   }
 }

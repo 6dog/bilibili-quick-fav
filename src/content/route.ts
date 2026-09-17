@@ -25,6 +25,7 @@ export class RouteCoordinator {
   #observer: MutationObserver | null = null;
   #scheduled = false;
   #navigation: EventTarget | null = null;
+  #pollTimer: number | null = null;
   readonly #check = () => this.check();
 
   get key(): string {
@@ -47,6 +48,7 @@ export class RouteCoordinator {
     }
     this.#observer = new MutationObserver(() => this.scheduleCheck());
     this.#observer.observe(document.documentElement, { childList: true, subtree: true });
+    this.#pollTimer = window.setInterval(this.#check, 1_000);
   }
 
   stop(): void {
@@ -57,6 +59,8 @@ export class RouteCoordinator {
     this.#navigation = null;
     this.#observer?.disconnect();
     this.#observer = null;
+    if (this.#pollTimer !== null) clearInterval(this.#pollTimer);
+    this.#pollTimer = null;
   }
 
   check(): void {

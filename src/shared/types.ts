@@ -1,4 +1,4 @@
-export const EXTENSION_VERSION = "2.0.4";
+export const EXTENSION_VERSION = "2.0.5";
 export const DEFAULT_PLAYBACK_RATE = 1.5;
 
 export interface QuickFolder {
@@ -25,6 +25,9 @@ export interface FavoriteSnapshot {
   active: boolean;
   configured: boolean;
   folderTitle: string | null;
+  folderId?: string | null;
+  mid?: string | null;
+  checkedAt?: number;
   message?: string;
 }
 
@@ -32,6 +35,7 @@ export interface ExtensionStatus {
   version: string;
   supportedPage: boolean;
   signedIn: boolean;
+  accountStatus?: "signed-in" | "signed-out" | "error";
   folder: QuickFolder | null;
   playbackEnabled: boolean;
   playbackRate: number;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OverlayUi } from "../src/content/overlay";
 import type { FavoriteSnapshot } from "../src/shared/types";
 
@@ -36,6 +36,21 @@ describe("favorite button responsiveness", () => {
     ui.updateCover(snapshot("mutating"));
     expect(ui.coverButton.disabled).toBe(false);
     expect(ui.root.querySelector("style")?.textContent).not.toContain("cursor: progress");
+    ui.destroy();
+  });
+
+  it("closes and settles the picker when cancelled", async () => {
+    const ui = new OverlayUi();
+    ui.detailButton.focus();
+    const selection = ui.chooseFolder([{ id: "20", title: "快捷", favorite: false, mediaCount: 0 }]);
+    await vi.waitFor(() => expect(ui.root.activeElement?.classList.contains("folder")).toBe(true));
+    const folderButton = ui.root.querySelector<HTMLButtonElement>(".folder")!;
+    folderButton.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, composed: true, shiftKey: false }));
+    expect(ui.root.activeElement?.classList.contains("dialog-close")).toBe(true);
+    ui.cancelFolderPicker();
+    expect(await selection).toBeNull();
+    expect(ui.root.querySelector(".backdrop")).toBeNull();
+    expect(ui.root.activeElement).toBe(ui.detailButton);
     ui.destroy();
   });
 });

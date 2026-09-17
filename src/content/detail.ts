@@ -128,7 +128,10 @@ export class DetailController {
     this.#resize.observe(player);
     this.#unsubscribe = this.service.subscribe(bvid, (snapshot) => {
       this.#snapshot = snapshot;
-      this.ui.setDetail(snapshot, () => void this.service.toggle(bvid));
+      this.ui.setDetail(snapshot, () => {
+        if (snapshot.status === "error") void this.service.load(bvid, "high", true);
+        else if (snapshot.status !== "mutating") void this.service.toggle(bvid);
+      });
       this.scheduleLayout();
     });
     void this.service.load(bvid, "high");
@@ -175,7 +178,7 @@ export class DetailController {
     this.#stableFrames = signature === this.#lastSignature ? this.#stableFrames + 1 : 0;
     this.#lastSignature = signature;
     const settling = performance.now() < this.#settleUntil || this.#stableFrames < 4;
-    const stateReady = this.#snapshot.status === "active" || this.#snapshot.status === "inactive";
+    const stateReady = this.#snapshot.status !== "unknown" && this.#snapshot.status !== "loading";
     const placement = computeDetailPlacement(
       this.#anchor.getBoundingClientRect(),
       this.#player.getBoundingClientRect(),

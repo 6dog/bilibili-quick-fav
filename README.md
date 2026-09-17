@@ -13,7 +13,7 @@
 
 ## 本地安装
 
-1. 安装 Node.js 20 或更高版本。
+1. 安装 Node.js 22.12 以上的 22.x 版本，或 Node.js 24 及以上版本。
 2. 在项目目录运行 `npm install` 和 `npm run package`。
 3. 打开 Chrome 的 `chrome://extensions`，启用“开发者模式”。
 4. 点击“加载已解压的扩展程序”，选择 `dist/extension`。
@@ -27,9 +27,11 @@
 - `npm test`：单元和 DOM 测试。
 - `npm run package`：生成扩展目录和确定性商店 ZIP。
 - `npm run check`：依次执行上述完整本地门禁。
-- `npm run test:release`：从待上传 ZIP 临时安装并执行真实浏览器门禁；包含可逆收藏测试，仅用于已授权的隔离测试账号。
+- `npm run test:release`：从待上传 ZIP 临时安装并执行只读浏览器门禁，不修改真实收藏。
+- `npm run test:release:write`：仅在已授权的隔离账号中执行一次加入与撤销；自动选用首次使用时未收藏的目录，或已配置的目标目录。可设置 `QFAV_TEST_FOLDER_ID=收藏夹ID` 限定目录。脚本预检所有目录状态，只恢复本次目标目录。
 
-最终上传文件位于 `dist/release/bilibili-quick-fav-2.0.4.zip`。商店审核使用的版本应当重新从该 ZIP 安装并完成真实浏览器验收。
+最终上传文件位于 `dist/release/bilibili-quick-fav-<版本号>.zip`。商店审核使用的版本应当重新从该 ZIP 安装并完成真实浏览器验收。商店截图须取自实际运行页面，不使用示意图。
+商店截图来自隔离 Chrome 中安装该 ZIP 后的真实页面：`assets/store-cover.png` 展示封面悬停按钮，`assets/store-picker.png` 展示首次选择框，`assets/store-screenshot.png` 展示视频详情页。若页面或界面改变，应重新截取并核对。
 
 ## 隐私
 

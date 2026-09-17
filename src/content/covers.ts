@@ -179,6 +179,10 @@ export class CoverController {
       if (node instanceof Element) {
         const record = this.#records.get(node);
         if (record) return record;
+        if (!pointer && node instanceof HTMLAnchorElement) {
+          const linked = this.#linkRecords.get(node);
+          if (linked) return linked;
+        }
         if (pointer && node instanceof HTMLAnchorElement) {
           const linked = this.#linkRecords.get(node);
           if (linked) {

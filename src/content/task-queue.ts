@@ -17,6 +17,8 @@ export class TaskQueue {
 
   constructor(readonly concurrency = 4) {}
 
+  get pending(): number { return this.#high.length + this.#normal.length; }
+
   add<T>(run: () => Promise<T>, priority: "high" | "normal" = "normal"): QueuedTaskHandle<T> {
     let task: QueuedTask<T>;
     const promise = new Promise<T>((resolve, reject) => {
