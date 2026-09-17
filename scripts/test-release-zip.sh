@@ -41,7 +41,7 @@ unzip -q "$release_zip" -d "$test_dir/extension"
   --mute-audio \
   --no-first-run \
   --no-default-browser-check \
-  --window-size=1440,1000 \
+  --window-size="${QFAV_WINDOW_SIZE:-1440,1000}" \
   about:blank >"$chrome_log" 2>&1 &
 chrome_pid="$!"
 
@@ -69,6 +69,10 @@ elif [[ "${QFAV_CAPTURE_STORE_ASSETS:-0}" == "1" ]]; then
   QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --capture-store-assets
 elif [[ "${QFAV_SPEED_DIAGNOSTICS:-0}" == "1" ]]; then
   QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --speed-diagnostics --video-only
+elif [[ "${QFAV_DETAIL_DIAGNOSTICS:-0}" == "1" ]]; then
+  QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --detail-diagnostics --video-only
+elif [[ "${QFAV_FOCUS_DIAGNOSTICS:-0}" == "1" ]]; then
+  QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs --focus-diagnostics --video-only
 else
   QFAV_EXTENSION_ID="$extension_id" node scripts/check-extension-browser.mjs
 fi

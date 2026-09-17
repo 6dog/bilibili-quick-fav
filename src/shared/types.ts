@@ -1,4 +1,4 @@
-export const EXTENSION_VERSION = "2.0.5";
+export const EXTENSION_VERSION = "2.0.6";
 export const DEFAULT_PLAYBACK_RATE = 1.5;
 
 export interface QuickFolder {
