@@ -92,7 +92,6 @@ export class DetailController {
   #settleUntil = 0;
   #stableFrames = 0;
   #lastSignature = "";
-  #scrollingUntil = 0;
 
   constructor(
     readonly service: FavoriteService,
@@ -191,12 +190,10 @@ export class DetailController {
   }
 
   private onObservedResize(): void {
-    if (performance.now() < this.#scrollingUntil) this.scheduleLayout();
-    else this.beginStabilization();
+    this.scheduleLayout();
   }
 
   readonly onScroll = (): void => {
-    this.#scrollingUntil = performance.now() + 180;
     this.#settleUntil = 0;
     this.#stableFrames = 4;
     this.#lastSignature = this.signature();

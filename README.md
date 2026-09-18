@@ -1,6 +1,6 @@
 # B站快捷收藏与默认倍速
 
-这是原油猴脚本的 Chrome Manifest V3 重写版。2.0 起只维护 Chrome 扩展，旧的
+1.0 正式版是原油猴脚本的 Chrome Manifest V3 重写版。后续只维护 Chrome 扩展，旧的
 `bilibili-quick-fav.user.js` 仅作为 Legacy 回退保留。
 
 ## 功能
