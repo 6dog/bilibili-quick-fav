@@ -86,7 +86,7 @@ async function saveStoreScreenshot(cdp, filename) {
   const screenshot = await cdp.send("Page.captureScreenshot", {
     format: "png",
     captureBeyondViewport: false,
-    clip: { x: 40, y: 150, width: 1280, height: 800, scale: 1 },
+    clip: { x: 40, y: 150, width: 960, height: 600, scale: 4 / 3 },
   });
   await writeFile(new URL(filename, directory), Buffer.from(screenshot.data, "base64"));
 }
@@ -338,7 +338,7 @@ async function checkVideoPage(url) {
       const screenshot = await page.cdp.send("Page.captureScreenshot", {
         format: "png",
         captureBeyondViewport: false,
-        clip: { x: 40, y: 160, width: 1280, height: 800, scale: 1 },
+        clip: { x: 40, y: 230, width: 960, height: 600, scale: 4 / 3 },
       });
       await writeFile(new URL("../dist/store-assets/screenshot-1280x800.png", import.meta.url), Buffer.from(screenshot.data, "base64"));
     }
