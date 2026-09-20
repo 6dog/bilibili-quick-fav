@@ -1,13 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <defs>
-    <linearGradient id="bg" x1="20" y1="12" x2="110" y2="118" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#19C3F5"/>
-      <stop offset="1" stop-color="#008BCB"/>
+    <linearGradient id="tile" x1="22" y1="18" x2="108" y2="114" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#31C8F5"/>
+      <stop offset="0.52" stop-color="#0AA7E3"/>
+      <stop offset="1" stop-color="#0878BE"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="16" y1="16" x2="112" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.19"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
   </defs>
-  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
-  <path d="M36 27h56a7 7 0 0 1 7 7v70l-35-21-35 21V34a7 7 0 0 1 7-7Z" fill="#fff"/>
-  <path d="M47 45h34M47 57h25" stroke="#00A1D6" stroke-width="7" stroke-linecap="round"/>
-  <rect x="52" y="65" width="49" height="28" rx="14" fill="#14212B"/>
-  <text x="76.5" y="84.5" fill="#fff" font-family="Arial, sans-serif" font-size="17" font-weight="700" text-anchor="middle">1.5×</text>
+  <rect x="16" y="16" width="96" height="96" rx="25" fill="url(#tile)"/>
+  <rect x="16" y="16" width="96" height="96" rx="25" fill="url(#glow)"/>
+  <path d="M47 37h34a7 7 0 0 1 7 7v51.5c0 1.7-1.9 2.7-3.3 1.8L64 83.7 43.3 97.3c-1.4.9-3.3-.1-3.3-1.8V44a7 7 0 0 1 7-7Z" fill="#FFFFFF"/>
 </svg>
